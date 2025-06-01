@@ -113,4 +113,4 @@ class ValidationError(BaseModel):
 
 
 class HTTPValidationError(BaseModel):
-   items: ValidationError = Field(..., title = 'Detail')
+   detail: List[ValidationError] = Field(..., title="Detail")
