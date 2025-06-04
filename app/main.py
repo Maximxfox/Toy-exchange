@@ -1,7 +1,6 @@
-from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi import FastAPI, Depends, HTTPException, Header, Query, Path
 from models import *
-from sqlalchemy import create_engine, Column, String, Enum, Uuid, and_
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import create_engine, and_
 from sqlalchemy.orm import sessionmaker, Session
 from models_bd import Base, User_BD, Instrument_BD, Order_BD, Balance_BD, Transaction_BD
 from models import (
@@ -183,14 +182,14 @@ async def startup_event():
         db.close()
 
 
-def get_current_user(authorization: Optional[str] = Header(None), db: Session = Depends(get_db)):
+def get_current_user(authorization: Optional[str] = Header(...), db: Session = Depends(get_db)):
     print(f"Received Authorization header: '{authorization}'")
     if not authorization or not authorization.startswith("TOKEN key"):
         raise HTTPException(
             status_code=401,
             detail=HTTPValidationError(detail=[ValidationError(loc="authorization",msg="Недействительный ключ",type="value_error")]).dict()
         )
-    api_key = authorization.replace("TOKEN ", "")
+    api_key = authorization[6:]
     user = db.query(User_BD).filter(User_BD.api_key == api_key).first()
     if not user:
         raise HTTPException(
@@ -233,7 +232,7 @@ async def list_instruments(db: Session = Depends(get_db)):
              200: {"description": "Successful Response", "model": L2OrderBook},
              422: {"description": "Validation Error", "model": HTTPValidationError}
          })
-async def get_orderbook(ticker: str, limit: int = 10, db: Session = Depends(get_db)):
+async def get_orderbook(ticker: str, limit: int = Query(10, le=25), db: Session = Depends(get_db)):
     return get_orderbook(db, ticker, limit)
 
 
@@ -250,19 +249,22 @@ async def get_orderbook(ticker: str, limit: int = 10, db: Session = Depends(get_
         422: {"description": "Validation Error", "model": HTTPValidationError}
     }
 )
-async def get_transaction_history(ticker: str, limit: int = 10, db: Session = Depends(get_db)):
+async def get_transaction_history(ticker: str, limit: int = Query(10, le=100), db: Session = Depends(get_db)):
     return get_transactions(db, ticker, limit)
 
 
 @app.get("/api/v1/balance", tags=["balance"],
          summary="Get Balances",
-         description="Получение балансов пользователя",
          operation_id="get_balances_api_v1_balance_get",
          response_model=Dict[str, int],
          responses={
              200: {
                  "description": "Successful Response",
-                 "model": dict
+                 "additionalProperties": {"type": "integer"},
+                 "example": {
+                    "MEMCOIN": 0,
+                    "DODGE": 100500
+                 }
              },
              422: {"description": "Validation Error", "model": HTTPValidationError}
          })
@@ -274,7 +276,6 @@ async def get_balances(current_user: User = Depends(get_current_user), db: Sessi
     "/api/v1/order",
     tags=["order"],
     summary="Create Order",
-    description="Создание нового ордера",
     operation_id="create_order_api_v1_order_post",
     response_model=CreateOrderResponse,
     responses={
@@ -294,7 +295,6 @@ async def create_order(
 "/api/v1/order",
     tags=["order"],
     summary="List Orders",
-    description="Получение списка ордеров пользователя",
     operation_id="list_orders_api_v1_order_get",
     response_model=List[Union[LimitOrder, MarketOrder]],
     responses={
@@ -329,7 +329,6 @@ async def get_order(order_id: str, current_user: User = Depends(get_current_user
     "/api/v1/order/{order_id}",
     tags=["order"],
     summary="Cancel Order",
-    description="Отмена ордера",
     operation_id="cancel_order_api_v1_order__order_id__delete",
     response_model=Ok,
     responses={
@@ -337,7 +336,7 @@ async def get_order(order_id: str, current_user: User = Depends(get_current_user
         422: {"description": "Validation Error", "model": HTTPValidationError}
     }
 )
-async def cancel_order(order_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def cancel_order(order_id: str = Path(..., format="uuid4"), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if not cancel_order(db, order_id):
         raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc="order_id", msg="Order not found", type="value_error")]))
     return Ok
@@ -346,7 +345,6 @@ async def cancel_order(order_id: str, current_user: User = Depends(get_current_u
     "/api/v1/admin/user/{user_id}",
     tags=["admin", "user"],
     summary="Delete User",
-    description="Удаление пользователя",
     operation_id="delete_user_api_v1_admin_user__user_id__delete",
     response_model=User,
     responses={
@@ -354,7 +352,7 @@ async def cancel_order(order_id: str, current_user: User = Depends(get_current_u
         422: {"description": "Validation Error", "model": HTTPValidationError}
     }
 )
-async def delete_user(user_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def delete_user(user_id: str = Path(..., format="uuid4"), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc="authorization", msg="Admin access required", type="permission_error")]))
     user = delete_user(db, user_id)
@@ -366,7 +364,6 @@ async def delete_user(user_id: str, current_user: User = Depends(get_current_use
     "/api/v1/admin/instrument",
     tags=["admin"],
     summary="Add Instrument",
-    description="Добавление нового инструмента",
     operation_id="add_instrument_api_v1_admin_instrument_post",
     response_model=Ok,
     responses={
