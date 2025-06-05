@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Depends, HTTPException, Header, Query, Path
+from fastapi import FastAPI, Depends, HTTPException, Header, Query, Path, Security
+from fastapi.security import APIKeyHeader
 from models import *
 from sqlalchemy import create_engine, and_
 from sqlalchemy.orm import sessionmaker, Session
@@ -73,7 +74,7 @@ def get_transactions(db: Session, ticker: str, limit: int = 10):
     return db.query(Transaction_BD).filter(Transaction_BD.ticker == ticker).order_by(Transaction_BD.timestamp.desc()).limit(limit).all()
 
 
-def get_balances(db: Session, user_id: str):
+def _get_balances(db: Session, user_id: str):
     balances = db.query(Balance_BD).filter(Balance_BD.user_id == user_id).all()
     return {b.ticker: b.amount for b in balances}
 
@@ -182,20 +183,19 @@ async def startup_event():
         db.close()
 
 
-def get_current_user(authorization: Optional[str] = Header(...), db: Session = Depends(get_db)):
+api_key_header = APIKeyHeader(name="Authorization")
+
+def get_current_user(
+    authorization: str = Security(api_key_header),
+    db: Session = Depends(get_db)
+):
     print(f"Received Authorization header: '{authorization}'")
     if not authorization or not authorization.startswith("TOKEN key"):
-        raise HTTPException(
-            status_code=401,
-            detail=HTTPValidationError(detail=[ValidationError(loc="authorization",msg="Недействительный ключ",type="value_error")]).dict()
-        )
+        raise HTTPException(status_code=401, detail="Недействительный ключ")
     api_key = authorization[6:]
     user = db.query(User_BD).filter(User_BD.api_key == api_key).first()
     if not user:
-        raise HTTPException(
-            status_code=401,
-            detail=HTTPValidationError(detail=[ValidationError(loc="authorization",msg="Нет пользователя",type="value_error")]).dict()
-        )
+        raise HTTPException(status_code=401, detail="Нет пользователя")
     return user
 
 
@@ -208,7 +208,7 @@ def get_current_user(authorization: Optional[str] = Header(...), db: Session = D
               422: {"description": "Validation Error", "model": HTTPValidationError}
           })
 async def register(user: NewUser, db: Session = Depends(get_db)):
-    return create_user(db, user)
+    return User.from_orm(create_user(db, user))
 
 
 @app.get("/api/v1/public/instrument",tags=["public"],
@@ -220,7 +220,7 @@ async def register(user: NewUser, db: Session = Depends(get_db)):
              200: {"description": "Successful Response", "model": List[Instrument]},
          })
 async def list_instruments(db: Session = Depends(get_db)):
-    return get_instruments(db)
+    return [Instrument.from_orm(i) for i in get_instruments(db)]
 
 
 @app.get("/api/v1/public/orderbook/{ticker}",tags=["public"],
@@ -268,8 +268,8 @@ async def get_transaction_history(ticker: str, limit: int = Query(10, le=100), d
              },
              422: {"description": "Validation Error", "model": HTTPValidationError}
          })
-async def get_balances(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return get_balances(db, str(current_user.id))
+async def get_balances(current_user: User = Security(get_current_user), db: Session = Depends(get_db)):
+    return _get_balances(db, str(current_user.id))
 
 
 @app.post(
@@ -285,7 +285,7 @@ async def get_balances(current_user: User = Depends(get_current_user), db: Sessi
 )
 async def create_order(
     order: Union[LimitOrderBody, MarketOrderBody],
-    current_user: User = Depends(get_current_user),
+    current_user: User = Security(get_current_user),
     db: Session = Depends(get_db)
 ):
     db_order = create_order(db, str(current_user.id), order)
@@ -302,7 +302,7 @@ async def create_order(
         422: {"description": "Validation Error", "model": HTTPValidationError}
     }
 )
-async def list_order(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def list_order(db: Session = Depends(get_db), current_user: User = Security(get_current_user)):
     return get_orders(db, str(current_user.id))
 
 
@@ -319,10 +319,10 @@ async def list_order(db: Session = Depends(get_db), current_user: User = Depends
         422: {"description": "Validation Error", "model": HTTPValidationError}
     }
 )
-async def get_order(order_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def get_order(order_id: str, current_user: User = Security(get_current_user), db: Session = Depends(get_db)):
     order = get_order(db, order_id)
     if not order or order.user_id != str(current_user.id):
-        raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc="order_id", msg="Order not found", type="value_error")]))
+        raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc="order_id", msg="Order not found", type="value_error")]).dict())
     return order
 
 @app.delete(
@@ -336,9 +336,9 @@ async def get_order(order_id: str, current_user: User = Depends(get_current_user
         422: {"description": "Validation Error", "model": HTTPValidationError}
     }
 )
-async def cancel_order(order_id: str = Path(..., format="uuid4"), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def cancel_order(order_id: str = Path(..., format="uuid4"), current_user: User = Security(get_current_user), db: Session = Depends(get_db)):
     if not cancel_order(db, order_id):
-        raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc="order_id", msg="Order not found", type="value_error")]))
+        raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc="order_id", msg="Order not found", type="value_error")]).dict())
     return Ok
 
 @app.delete(
@@ -352,12 +352,12 @@ async def cancel_order(order_id: str = Path(..., format="uuid4"), current_user: 
         422: {"description": "Validation Error", "model": HTTPValidationError}
     }
 )
-async def delete_user(user_id: str = Path(..., format="uuid4"), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def delete_user(user_id: str = Path(..., format="uuid4"), current_user: User = Security(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc="authorization", msg="Admin access required", type="permission_error")]))
+        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc="authorization", msg="Admin access required", type="permission_error")]).dict())
     user = delete_user(db, user_id)
     if not user:
-        raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc="user_id", msg="User not found", type="value_error")]))
+        raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc="user_id", msg="User not found", type="value_error")]).dict())
     return user
 
 @app.post(
@@ -373,13 +373,13 @@ async def delete_user(user_id: str = Path(..., format="uuid4"), current_user: Us
 )
 async def add_instrument(
     instrument: Instrument,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Security(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc="authorization", msg="Admin access required", type="permission_error")]))
+        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc="authorization", msg="Admin access required", type="permission_error")]).dict())
     add_instrument(db, instrument)
-    return Ok
+    return Ok()
 
 @app.delete(
     "/api/v1/admin/instrument/{ticker}",
@@ -393,11 +393,11 @@ async def add_instrument(
         422: {"description": "Validation Error", "model": HTTPValidationError}
     }
 )
-async def delete_instrument(ticker: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def delete_instrument(ticker: str, current_user: User = Security(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc="authorization", msg="Admin access required", type="permission_error")]))
+        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc="authorization", msg="Admin access required", type="permission_error")]).dict())
     if not delete_instrument(db, ticker):
-        raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc="ticker", msg="Instrument not found", type="value_error")]))
+        raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc="ticker", msg="Instrument not found", type="value_error")]).dict())
     return Ok
 
 @app.post(
@@ -414,13 +414,13 @@ async def delete_instrument(ticker: str, current_user: User = Depends(get_curren
 )
 async def deposit_balance(
     body: Body_deposit_api_v1_admin_balance_deposit_post,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Security(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc="authorization", msg="Admin access required", type="permission_error")]))
+        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc="authorization", msg="Admin access required", type="permission_error")]).dict())
     deposit(db, body)
-    return Ok
+    return Ok()
 
 @app.post(
     "/api/v1/admin/balance/withdraw",
@@ -436,11 +436,11 @@ async def deposit_balance(
 )
 async def withdraw_balance(
     body: Body_withdraw_api_v1_admin_balance_withdraw_post,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Security(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc="authorization", msg="Admin access required", type="permission_error")]))
+        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc="authorization", msg="Admin access required", type="permission_error")]).dict())
     if not withdraw(db, body):
-        raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[ValidationError(loc="amount", msg="Insufficient balance", type="value_error")]))
+        raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[ValidationError(loc="amount", msg="Insufficient balance", type="value_error")]).dict())
     return Ok
