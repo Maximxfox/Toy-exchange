@@ -43,9 +43,6 @@ class Instrument(BaseModel):
    name: str = Field(..., title="Name")
    ticker: constr(pattern=r"^[A-Z]{2,10}$") = Field(..., title="Ticker")
 
-   class Config:
-      from_attributes = True
-
 
 class Level(BaseModel):
    price: int = Field(..., title="Price")
@@ -107,9 +104,6 @@ class User(BaseModel):
    name: str = Field(..., title = 'Name')
    role: UserRole
    api_key: str = Field(..., title = 'Api Key')
-
-   class Config:
-      from_attributes = True
 
 
 class ValidationError(BaseModel):
