@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, Header, Query, Path
+from fastapi import FastAPI, Depends, HTTPException, Header, Query, Path, Body
 from models import *
 from sqlalchemy import create_engine, and_
 from sqlalchemy.orm import sessionmaker, Session
@@ -73,7 +73,7 @@ def get_transactions(db: Session, ticker: str, limit: int = 10):
     return db.query(Transaction_BD).filter(Transaction_BD.ticker == ticker).order_by(Transaction_BD.timestamp.desc()).limit(limit).all()
 
 
-def get_balances(db: Session, user_id: str):
+def _get_balances(db: Session, user_id: str):
     balances = db.query(Balance_BD).filter(Balance_BD.user_id == user_id).all()
     return {b.ticker: b.amount for b in balances}
 
@@ -182,7 +182,7 @@ async def startup_event():
         db.close()
 
 
-def get_current_user(authorization: Optional[str] = Header(...), db: Session = Depends(get_db)):
+def get_current_user(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
     print(f"Received Authorization header: '{authorization}'")
     if not authorization or not authorization.startswith("TOKEN key"):
         raise HTTPException(
@@ -201,7 +201,7 @@ def get_current_user(authorization: Optional[str] = Header(...), db: Session = D
 
 @app.post("/api/v1/public/register", tags=["public"],
           summary="Register",
-          description="Регистрация пользователя в платформе. Обязательна для совершения сделок",
+          description='''Регистрация пользователя в платформе. Обязательна для совершения сделок\napi_key полученный из этого метода следует передавать в другие через заголовок Authorization\n\nНапример для api_key='key-bee6de4d-7a23-4bb1-a048-523c2ef0ea0c` знаначение будет таким:\n\nAuthorization: TOKEN key-bee6de4d-7a23-4bb1-a048-523c2ef0ea0c''',
           operation_id="register_api_v1_public_register_post",
           responses={
               200: {"description": "Successful Response", "model": User},
@@ -253,23 +253,33 @@ async def get_transaction_history(ticker: str, limit: int = Query(10, le=100), d
     return get_transactions(db, ticker, limit)
 
 
-@app.get("/api/v1/balance", tags=["balance"],
-         summary="Get Balances",
-         operation_id="get_balances_api_v1_balance_get",
-         response_model=Dict[str, int],
-         responses={
-             200: {
-                 "description": "Successful Response",
-                 "additionalProperties": {"type": "integer"},
-                 "example": {
-                    "MEMCOIN": 0,
-                    "DODGE": 100500
-                 }
-             },
-             422: {"description": "Validation Error", "model": HTTPValidationError}
-         })
+@app.get(
+    "/api/v1/balance",
+    tags=["balance"],
+    summary="Get Balances",
+    operation_id="get_balances_api_v1_balance_get",
+    response_model=Dict[str, int],
+    responses={
+        200: {
+            "description": "Successful Response",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "MEMCOIN": 0,
+                        "DODGE": 100500
+                    }
+                }
+            }
+        },
+        422: {
+            "description": "Validation Error",
+            "model": HTTPValidationError
+        }
+    }
+)
+
 async def get_balances(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return get_balances(db, str(current_user.id))
+    return _get_balances(db, str(current_user.id))
 
 
 @app.post(
@@ -284,7 +294,7 @@ async def get_balances(current_user: User = Depends(get_current_user), db: Sessi
     }
 )
 async def create_order(
-    order: Union[LimitOrderBody, MarketOrderBody],
+    order: Union[LimitOrderBody, MarketOrderBody] = Body(..., title="Body"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -311,7 +321,6 @@ async def list_order(db: Session = Depends(get_db), current_user: User = Depends
     "/api/v1/order/{order_id}",
     tags=["order"],
     summary="Get Order",
-    description="Получение информации об ордере",
     operation_id="get_order_api_v1_order__order_id__get",
     response_model=Union[LimitOrder, MarketOrder],
     responses={
@@ -319,7 +328,11 @@ async def list_order(db: Session = Depends(get_db), current_user: User = Depends
         422: {"description": "Validation Error", "model": HTTPValidationError}
     }
 )
-async def get_order(order_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def get_order(
+    order_id: str = Path(..., title="Order Id", format="uuid4"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     order = get_order(db, order_id)
     if not order or order.user_id != str(current_user.id):
         raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc="order_id", msg="Order not found", type="value_error")]))
@@ -393,7 +406,11 @@ async def add_instrument(
         422: {"description": "Validation Error", "model": HTTPValidationError}
     }
 )
-async def delete_instrument(ticker: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def delete_instrument(
+    ticker: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc="authorization", msg="Admin access required", type="permission_error")]))
     if not delete_instrument(db, ticker):
