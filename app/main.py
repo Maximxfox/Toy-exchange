@@ -55,7 +55,7 @@ def create_user(db: Session, user: NewUser):
 def get_instruments(db):
     return db.query(Instrument_BD).all()
 
-def get_orderbook(db: Session, ticker: str, limit: int = 10):
+def get_orderbook(db: Session, ticker: str, limit: int):
     bids = db.query(Order_BD).filter(
         and_(Order_BD.ticker == ticker, Order_BD.direction == Direction.BUY, Order_BD.status != OrderStatus.CANCELLED)
     ).order_by(Order_BD.price.desc()).limit(limit).all()
@@ -69,7 +69,7 @@ def get_orderbook(db: Session, ticker: str, limit: int = 10):
         "ask_levels": [{"price": order.price, "qty": order.qty - order.filled} for order in asks if order.price]
     }
 
-def get_transactions(db: Session, ticker: str, limit: int = 10):
+def get_transactions(db: Session, ticker: str, limit: int):
     return db.query(Transaction_BD).filter(Transaction_BD.ticker == ticker).order_by(Transaction_BD.timestamp.desc()).limit(limit).all()
 
 
@@ -78,18 +78,98 @@ def _get_balances(db: Session, user_id: str):
     return {b.ticker: b.amount for b in balances}
 
 
+def update_balance(db: Session, user_id: str, ticker: str, amount: int):
+    balance = db.query(Balance_BD).filter(and_(Balance_BD.user_id == user_id, Balance_BD.ticker == ticker)).first()
+    if balance:
+        balance.amount += amount
+    else:
+        balance = Balance_BD(user_id=user_id, ticker=ticker, amount=amount)
+        db.add(balance)
+    db.commit()
+
+
+def execute_order(db: Session, new_order: Order_BD):
+    if new_order.status == OrderStatus.CANCELLED:
+        return
+    opposite_direction = Direction.SELL if new_order.direction == Direction.BUY else Direction.BUY
+    price_condition = (Order_BD.price <= new_order.price if new_order.direction == Direction.BUY else Order_BD.price >= new_order.price) \
+        if new_order.price else None
+    order_by = Order_BD.price.asc() if new_order.direction == Direction.BUY else Order_BD.price.desc()
+    matching_orders = (db.query(Order_BD).filter(and_(
+                Order_BD.ticker == new_order.ticker,
+                Order_BD.direction == opposite_direction,
+                Order_BD.status.in_([OrderStatus.NEW, OrderStatus.PARTIALLY_EXECUTED]),
+                price_condition if new_order.price else True)
+    ).order_by(order_by).all())
+    remaining_qty = new_order.qty - new_order.filled
+    for match_order in matching_orders:
+        if remaining_qty <= 0:
+            break
+        price = new_order.price if new_order.price else match_order.price
+        match_available = match_order.qty - match_order.filled
+        matched_qty = min(remaining_qty, match_available)
+        new_order.filled += matched_qty
+        match_order.filled += matched_qty
+        new_order.status = (
+            OrderStatus.EXECUTED if new_order.filled == new_order.qty else OrderStatus.PARTIALLY_EXECUTED
+        )
+        match_order.status = (
+            OrderStatus.EXECUTED if match_order.filled == match_order.qty else OrderStatus.PARTIALLY_EXECUTED
+        )
+        transaction = Transaction_BD(
+            ticker=new_order.ticker,
+            amount=matched_qty,
+            price=price,
+            timestamp=datetime.utcnow()
+        )
+        db.add(transaction)
+        if new_order.direction == Direction.BUY:
+            update_balance(db, new_order.user_id, "RUB", -matched_qty * price)
+            update_balance(db, new_order.user_id, new_order.ticker, matched_qty)
+            update_balance(db, match_order.user_id, "RUB", matched_qty * price)
+            update_balance(db, match_order.user_id, new_order.ticker, -matched_qty)
+        else:
+            update_balance(db, new_order.user_id, "RUB", matched_qty * price)
+            update_balance(db, new_order.user_id, new_order.ticker, -matched_qty)
+            update_balance(db, match_order.user_id, "RUB", -matched_qty * price)
+            update_balance(db, match_order.user_id, new_order.ticker, matched_qty)
+        remaining_qty -= matched_qty
+    db.commit()
+
+
 def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketOrderBody]):
+    if not db.query(Instrument_BD).filter(Instrument_BD.ticker == order.ticker).first():
+        raise HTTPException(
+            status_code=400,
+            detail=HTTPValidationError(detail=[ValidationError(loc="ticker", msg="Instrument not found", type="value_error")])
+        )
+    if order.direction == Direction.BUY:
+        required_rub = order.qty * order.price
+        user_balances = _get_balances(db, user_id)
+        if user_balances.get("RUB", 0) < required_rub:
+            raise HTTPException(
+                status_code=400,
+                detail=HTTPValidationError(detail=[ValidationError(loc="balance", msg="Insufficient RUB balance", type="value_error")])
+            )
+    else:
+        user_balances = _get_balances(db, user_id)
+        if user_balances.get(order.ticker, 0) < order.qty:
+            raise HTTPException(
+                status_code=400,
+                detail=HTTPValidationError(detail=[ValidationError(loc="balance", msg=f"Insufficient {order.ticker} balance", type="value_error")])
+            )
     db_order = Order_BD(
-        user_id = user_id,
-        ticker = order.ticker,
-        direction = order.direction,
-        qty = order.qty,
-        price = order.price if isinstance(order, LimitOrderBody) else None,
-        status = OrderStatus.NEW,
+        user_id=user_id,
+        ticker=order.ticker,
+        direction=order.direction,
+        qty=order.qty,
+        price=order.price,
+        status=OrderStatus.NEW,
     )
     db.add(db_order)
     db.commit()
     db.refresh(db_order)
+    execute_order(db, db_order)
     return db_order
 
 

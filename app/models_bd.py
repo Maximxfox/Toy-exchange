@@ -13,7 +13,7 @@ class User_BD(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String, nullable=False)
     role = Column(Enum(UserRole), nullable=False, default=UserRole.USER)
-    api_key = Column(String, nullable=False, default=lambda: f"key-{uuid.uuid4()}")
+    api_key = Column(String, unique=True, nullable=False, default=lambda: f"key-{uuid.uuid4()}")
     orders = relationship("Order_BD", back_populates="user")
     balances = relationship("Balance_BD", back_populates="user")
 
@@ -31,7 +31,7 @@ class Order_BD(Base):
     ticker = Column(String, ForeignKey("instruments.ticker"), nullable=False)
     direction = Column(Enum(Direction), nullable=False)
     qty = Column(Integer, nullable=False)
-    price = Column(Integer)
+    price = Column(Integer, nullable=False)
     status = Column(Enum(OrderStatus), nullable=False, default=OrderStatus.NEW)
     timestamp = Column(DateTime, nullable=False, default=datetime.utcnow)
     filled = Column(Integer, default=0)
