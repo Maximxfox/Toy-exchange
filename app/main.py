@@ -1,3 +1,4 @@
+import logging
 from fastapi import FastAPI, Depends, HTTPException, Header, Query, Path, Body
 from models import *
 from sqlalchemy import create_engine, and_
@@ -11,6 +12,14 @@ from models import (
 )
 
 
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="[%(levelname)s] %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+    ]
+)
+logger = logging.getLogger(__name__)
 SQLALCHEMY_DATABASE_URL = "sqlite:///./toy_exchange.db"
 engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
 Base.metadata.create_all(bind=engine)
@@ -24,6 +33,7 @@ def get_db():
 
 
 def initialize_test_users(db: Session):
+    logger.info("Initializing test users")
     if not db.query(User_BD).filter(User_BD.name == "testuser").first():
         test_user = User_BD(
             name="testuser",
@@ -45,6 +55,7 @@ def initialize_test_users(db: Session):
 
 
 def create_user(db: Session, user: NewUser):
+    logger.info(f"Creating user with name: {user.name}")
     db_user = User_BD(name=user.name, role=UserRole.USER, api_key=f"key-{uuid4()}")
     db.add(db_user)
     db.commit()
@@ -53,9 +64,11 @@ def create_user(db: Session, user: NewUser):
 
 
 def get_instruments(db):
+    logger.info("Fetching all instruments")
     return db.query(Instrument_BD).all()
 
 def get_orderbook(db: Session, ticker: str, limit: int):
+    logger.info(f"Fetching order book for ticker: {ticker}, limit: {limit}")
     bids = db.query(Order_BD).filter(
         and_(Order_BD.ticker == ticker, Order_BD.direction == Direction.BUY, Order_BD.status != OrderStatus.CANCELLED)
     ).order_by(Order_BD.price.desc()).limit(limit).all()
@@ -70,16 +83,21 @@ def get_orderbook(db: Session, ticker: str, limit: int):
     }
 
 def get_transactions(db: Session, ticker: str, limit: int):
+    logger.info(f"Fetching transactions for ticker: {ticker}, limit: {limit}")
     return db.query(Transaction_BD).filter(Transaction_BD.ticker == ticker).order_by(Transaction_BD.timestamp.desc()).limit(limit).all()
 
 
 def _get_balances(db: Session, user_id: str):
+    logger.info(f"Fetching balances for user ID: {user_id}")
     balances = db.query(Balance_BD).filter(Balance_BD.user_id == user_id).all()
     return {b.ticker: b.amount for b in balances}
 
 
 def update_balance(db: Session, user_id: str, ticker: str, amount: int):
-    balance = db.query(Balance_BD).filter(and_(Balance_BD.user_id == user_id, Balance_BD.ticker == ticker)).first()
+    logger.info(f"Updating balance for user {user_id}, ticker {ticker}, amount {amount}")
+    balance = db.query(Balance_BD).filter(
+        and_(Balance_BD.user_id == user_id, Balance_BD.ticker == ticker)
+    ).first()
     if balance:
         balance.amount += amount
     else:
@@ -89,6 +107,7 @@ def update_balance(db: Session, user_id: str, ticker: str, amount: int):
 
 
 def execute_order(db: Session, new_order: Order_BD):
+    logger.info(f"Executing order ID: {new_order.id}, ticker: {new_order.ticker}, direction: {new_order.direction}, qty: {new_order.qty}, price: {new_order.price}")
     if new_order.status == OrderStatus.CANCELLED:
         return
     opposite_direction = Direction.SELL if new_order.direction == Direction.BUY else Direction.BUY
@@ -99,7 +118,8 @@ def execute_order(db: Session, new_order: Order_BD):
                 Order_BD.ticker == new_order.ticker,
                 Order_BD.direction == opposite_direction,
                 Order_BD.status.in_([OrderStatus.NEW, OrderStatus.PARTIALLY_EXECUTED]),
-                price_condition if new_order.price else True)
+                price_condition if new_order.price else True
+            )
     ).order_by(order_by).all())
     remaining_qty = new_order.qty - new_order.filled
     for match_order in matching_orders:
@@ -138,10 +158,11 @@ def execute_order(db: Session, new_order: Order_BD):
 
 
 def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketOrderBody]):
+    logger.info(f"Creating order for user {user_id}: ticker={order.ticker}, direction={order.direction}, qty={order.qty}, price={order.price}")
     if not db.query(Instrument_BD).filter(Instrument_BD.ticker == order.ticker).first():
         raise HTTPException(
             status_code=400,
-            detail=HTTPValidationError(detail=[ValidationError(loc="ticker", msg="Instrument not found", type="value_error")])
+            detail=HTTPValidationError(detail=[ValidationError(loc=["ticker"], msg="Instrument not found", type="value_error")])
         )
     if order.direction == Direction.BUY:
         required_rub = order.qty * order.price
@@ -149,14 +170,14 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
         if user_balances.get("RUB", 0) < required_rub:
             raise HTTPException(
                 status_code=400,
-                detail=HTTPValidationError(detail=[ValidationError(loc="balance", msg="Insufficient RUB balance", type="value_error")])
+                detail=HTTPValidationError(detail=[ValidationError(loc=["balance"], msg="Insufficient RUB balance", type="value_error")])
             )
     else:
         user_balances = _get_balances(db, user_id)
         if user_balances.get(order.ticker, 0) < order.qty:
             raise HTTPException(
                 status_code=400,
-                detail=HTTPValidationError(detail=[ValidationError(loc="balance", msg=f"Insufficient {order.ticker} balance", type="value_error")])
+                detail=HTTPValidationError(detail=[ValidationError(loc=["balance"], msg=f"Insufficient {order.ticker} balance", type="value_error")])
             )
     db_order = Order_BD(
         user_id=user_id,
@@ -174,6 +195,7 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
 
 
 def get_orders(db: Session, user_id: str):
+    logger.info(f"Retrieved orders for user {user_id}")
     orders = db.query(Order_BD).filter(Order_BD.user_id == user_id).all()
     result = []
     for order in orders:
@@ -187,6 +209,7 @@ def get_orders(db: Session, user_id: str):
 
 
 def get_order(db: Session, order_id: str):
+    logger.info(f"Retrieved order {order_id}")
     order = db.query(Order_BD).filter(Order_BD.id == order_id).first()
     if not order:
         return None
@@ -199,28 +222,34 @@ def get_order(db: Session, order_id: str):
 
 
 def cancel_order(db: Session, order_id: str):
+    logger.info(f"Cancelled order {order_id}")
     order = db.query(Order_BD).filter(Order_BD.id == order_id).first()
     if order:
         order.status = OrderStatus.CANCELLED
         db.commit()
         return True
+    logger.warning(f"Order {order_id} not found for cancellation")
     return False
 
 def delete_user(db: Session, user_id: str):
+    logger.info(f"Deleted user {user_id}")
     user = db.query(User_BD).filter(User_BD.id == user_id).first()
     if user:
         db.delete(user)
         db.commit()
         return user
+    logger.warning(f"User {user_id} not found for deletion")
     return None
 
 def add_instrument(db: Session, instrument: Instrument):
+    logger.info(f"Added instrument {instrument.ticker}")
     db_instrument = Instrument_BD(name=instrument.name, ticker=instrument.ticker)
     db.add(db_instrument)
     db.commit()
     return True
 
 def delete_instrument(db: Session, ticker: str):
+    logger.info(f"Deleted instrument {ticker}")
     instrument = db.query(Instrument_BD).filter(Instrument_BD.ticker == ticker).first()
     if instrument:
         db.delete(instrument)
@@ -234,9 +263,11 @@ def deposit(db: Session, body: Body_deposit_api_v1_admin_balance_deposit_post):
     ).first()
     if balance:
         balance.amount += body.amount
+        logger.info(f"Updated balance for user {body.user_id}, ticker {body.ticker} by {body.amount}")
     else:
         balance = Balance_BD(user_id=str(body.user_id), ticker=body.ticker, amount=body.amount)
         db.add(balance)
+        logger.info(f"Created new balance for user {body.user_id}, ticker {body.ticker} with {body.amount}")
     db.commit()
     return True
 
@@ -247,7 +278,9 @@ def withdraw(db: Session, body: Body_withdraw_api_v1_admin_balance_withdraw_post
     if balance and balance.amount >= body.amount:
         balance.amount -= body.amount
         db.commit()
+        logger.info(f"Withdrew {body.amount} {body.ticker} from user {body.user_id}")
         return True
+    logger.warning(f"Insufficient balance for withdrawal: user {body.user_id}, ticker {body.ticker}, requested {body.amount}")
     return False
 
 
@@ -255,6 +288,7 @@ app = FastAPI(title="Toy exchange", version="0.1.0")
 
 @app.on_event("startup")
 async def startup_event():
+    logger.info("Starting FastAPI application")
     db = SessionLocal()
     try:
         initialize_test_users(db)
@@ -263,18 +297,20 @@ async def startup_event():
 
 
 def get_current_user(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
-    print(f"Received Authorization header: '{authorization}'")
     if not authorization or not authorization.startswith("TOKEN key"):
+        logger.warning("Invalid or missing Authorization header")
         raise HTTPException(
             status_code=401,
-            detail=HTTPValidationError(detail=[ValidationError(loc="authorization",msg="Недействительный ключ",type="value_error")]).dict()
+            detail=HTTPValidationError(detail=[ValidationError(loc=["authorization"],msg="Недействительный ключ",type="value_error")]).dict()
         )
     api_key = authorization[6:]
     user = db.query(User_BD).filter(User_BD.api_key == api_key).first()
+    logger.info(f"Authenticated user: {user.name} (ID: {user.id})")
     if not user:
+        logger.warning(f"No user found for API key: {api_key}")
         raise HTTPException(
             status_code=401,
-            detail=HTTPValidationError(detail=[ValidationError(loc="authorization",msg="Нет пользователя",type="value_error")]).dict()
+            detail=HTTPValidationError(detail=[ValidationError(loc=["authorization"],msg="Нет пользователя",type="value_error")]).dict()
         )
     return user
 
@@ -288,6 +324,7 @@ def get_current_user(authorization: Optional[str] = Header(default=None), db: Se
               422: {"description": "Validation Error", "model": HTTPValidationError}
           })
 async def register(user: NewUser, db: Session = Depends(get_db)):
+    logger.info(f"Register endpoint called for user: {user.name}")
     return create_user(db, user)
 
 
@@ -300,6 +337,7 @@ async def register(user: NewUser, db: Session = Depends(get_db)):
              200: {"description": "Successful Response", "model": List[Instrument]},
          })
 async def list_instruments(db: Session = Depends(get_db)):
+    logger.info("List instruments endpoint called")
     return get_instruments(db)
 
 
@@ -313,6 +351,7 @@ async def list_instruments(db: Session = Depends(get_db)):
              422: {"description": "Validation Error", "model": HTTPValidationError}
          })
 async def get_orderbook(ticker: str, limit: int = Query(10, le=25), db: Session = Depends(get_db)):
+    logger.info(f"Orderbook endpoint called for ticker: {ticker}, limit: {limit}")
     return get_orderbook(db, ticker, limit)
 
 
@@ -330,6 +369,7 @@ async def get_orderbook(ticker: str, limit: int = Query(10, le=25), db: Session 
     }
 )
 async def get_transaction_history(ticker: str, limit: int = Query(10, le=100), db: Session = Depends(get_db)):
+    logger.info(f"Transaction history endpoint called for ticker: {ticker}, limit: {limit}")
     return get_transactions(db, ticker, limit)
 
 
@@ -359,6 +399,7 @@ async def get_transaction_history(ticker: str, limit: int = Query(10, le=100), d
 )
 
 async def get_balances(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    logger.info(f"Get balances endpoint called for user: {current_user.id}")
     return _get_balances(db, str(current_user.id))
 
 
@@ -378,6 +419,7 @@ async def create_order(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    logger.info(f"Create order endpoint called for user: {current_user.id}, ticker: {order.ticker}")
     db_order = create_order(db, str(current_user.id), order)
     return CreateOrderResponse(order_id=db_order.id)
 
@@ -393,6 +435,7 @@ async def create_order(
     }
 )
 async def list_order(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    logger.info(f"List orders endpoint called for user: {current_user.id}")
     return get_orders(db, str(current_user.id))
 
 
@@ -414,8 +457,10 @@ async def get_order(
     db: Session = Depends(get_db)
 ):
     order = get_order(db, order_id)
+    logger.info(f"Get order endpoint called for order: {order_id}, user: {current_user.id}")
     if not order or order.user_id != str(current_user.id):
-        raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc="order_id", msg="Order not found", type="value_error")]))
+        logger.warning(f"Order {order_id} not found or not owned by user {current_user.id}")
+        raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc=["order_id"], msg="Order not found", type="value_error")]))
     return order
 
 @app.delete(
@@ -430,8 +475,10 @@ async def get_order(
     }
 )
 async def cancel_order(order_id: str = Path(..., format="uuid4"), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    logger.info(f"Cancel order endpoint called for order: {order_id}, user: {current_user.id}")
     if not cancel_order(db, order_id):
-        raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc="order_id", msg="Order not found", type="value_error")]))
+        logger.warning(f"Order {order_id} not found for cancellation")
+        raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc=["order_id"], msg="Order not found", type="value_error")]))
     return Ok
 
 @app.delete(
@@ -446,11 +493,14 @@ async def cancel_order(order_id: str = Path(..., format="uuid4"), current_user: 
     }
 )
 async def delete_user(user_id: str = Path(..., format="uuid4"), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    logger.info(f"Delete user endpoint called for user: {user_id}, by admin: {current_user.id}")
     if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc="authorization", msg="Admin access required", type="permission_error")]))
+        logger.warning(f"Non-admin user {current_user.id} attempted to delete user {user_id}")
+        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc=["authorization"], msg="Admin access required", type="permission_error")]))
     user = delete_user(db, user_id)
     if not user:
-        raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc="user_id", msg="User not found", type="value_error")]))
+        logger.warning(f"User {user_id} not found for deletion")
+        raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc=["user_id"], msg="User not found", type="value_error")]))
     return user
 
 @app.post(
@@ -469,8 +519,10 @@ async def add_instrument(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    logger.info(f"Add instrument endpoint called for ticker: {instrument.ticker}, by user: {current_user.id}")
     if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc="authorization", msg="Admin access required", type="permission_error")]))
+        logger.warning(f"Non-admin user {current_user.id} attempted to add instrument {instrument.ticker}")
+        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc=["authorization"], msg="Admin access required", type="permission_error")]))
     add_instrument(db, instrument)
     return Ok
 
@@ -491,10 +543,13 @@ async def delete_instrument(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    logger.info(f"Delete instrument endpoint called for ticker: {ticker}, by user: {current_user.id}")
     if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc="authorization", msg="Admin access required", type="permission_error")]))
+        logger.warning(f"Non-admin user {current_user.id} attempted to delete instrument {ticker}")
+        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc=["authorization"], msg="Admin access required", type="permission_error")]))
     if not delete_instrument(db, ticker):
-        raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc="ticker", msg="Instrument not found", type="value_error")]))
+        logger.warning(f"Instrument {ticker} not found for deletion")
+        raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc=["ticker"], msg="Instrument not found", type="value_error")]))
     return Ok
 
 @app.post(
@@ -514,8 +569,10 @@ async def deposit_balance(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    logger.info(f"Deposit endpoint called for user: {body.user_id}, ticker: {body.ticker}, amount: {body.amount}, by admin: {current_user.id}")
     if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc="authorization", msg="Admin access required", type="permission_error")]))
+        logger.warning(f"Non-admin user {current_user.id} attempted to deposit for user {body.user_id}")
+        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc=["authorization"], msg="Admin access required", type="permission_error")]))
     deposit(db, body)
     return Ok
 
@@ -536,8 +593,11 @@ async def withdraw_balance(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    logger.info(f"Withdraw endpoint called for user: {body.user_id}, ticker: {body.ticker}, amount: {body.amount}, by admin: {current_user.id}")
     if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc="authorization", msg="Admin access required", type="permission_error")]))
+        logger.warning(f"Non-admin user {current_user.id} attempted to withdraw for user {body.user_id}")
+        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc=["authorization"], msg="Admin access required", type="permission_error")]))
     if not withdraw(db, body):
-        raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[ValidationError(loc="amount", msg="Insufficient balance", type="value_error")]))
+        logger.warning(f"Insufficient balance for withdrawal: user {body.user_id}, ticker {body.ticker}, amount {body.amount}")
+        raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[ValidationError(loc=["amount"], msg="Insufficient balance", type="value_error")]))
     return Ok
