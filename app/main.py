@@ -140,7 +140,12 @@ def execute_order(db: Session, new_order: Order_BD):
     for match_order in matching_orders:
         if remaining_qty <= 0:
             break
-        price = new_order.price if new_order.price else match_order.price
+        if new_order.price is not None:
+            price = new_order.price
+        elif match_order.price is not None:
+            price = match_order.price
+        else:
+            continue
         logger.info(f"Matching with order ID: {match_order.id}, price: {price}")
         match_available = match_order.qty - match_order.filled
         matched_qty = min(remaining_qty, match_available)
@@ -261,10 +266,16 @@ def delete_user(db: Session, user_id: str):
 
 def add_instrument(db: Session, instrument: Instrument):
     logger.info(f"Added instrument {instrument.ticker}")
-    db_instrument = Instrument_BD(name=instrument.name, ticker=instrument.ticker)
-    db.add(db_instrument)
-    db.commit()
-    return True
+    existing = db.query(Instrument_BD).filter(Instrument_BD.ticker == instrument.ticker).first()
+    if existing:
+        logger.warning(f"Instrument with ticker {instrument.ticker} already exists")
+        return False
+    else:
+        logger.info(f"Successfully added instrument {instrument.ticker}")
+        db_instrument = Instrument_BD(name=instrument.name, ticker=instrument.ticker)
+        db.add(db_instrument)
+        db.commit()
+        return True
 
 def delete_instrument(db: Session, ticker: str):
     logger.info(f"Deleted instrument {ticker}")
@@ -541,7 +552,8 @@ async def add_instrument_endpoint(
     if current_user.role != UserRole.ADMIN:
         logger.warning(f"Non-admin user {current_user.id} attempted to add instrument {instrument.ticker}")
         raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc=["authorization"], msg="Admin access required", type="permission_error")]).dict())
-    add_instrument(db, instrument)
+    if not add_instrument(db, instrument):
+        raise HTTPException(status_code=403,detail=HTTPValidationError( detail=[ValidationError(loc=["ticker"], msg="Instrument with this ticker already exists",type="value_error")]).dict())
     return Ok
 
 @app.delete(
