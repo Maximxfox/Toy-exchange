@@ -22,6 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 SQLALCHEMY_DATABASE_URL = "sqlite:///./toy_exchange.db"
 engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+Base.metadata.drop_all(bind=engine)
 Base.metadata.create_all(bind=engine)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def get_db():
@@ -174,7 +175,6 @@ def execute_order(db: Session, new_order: Order_BD):
 
 
 def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketOrderBody]):
-    logger.info(f"Creating order for user {user_id}: ticker={order.ticker}, direction={order.direction}, qty={order.qty}, price={order.price}")
     if not db.query(Instrument_BD).filter(Instrument_BD.ticker == order.ticker).first():
         raise HTTPException(
             status_code=400,
@@ -182,12 +182,15 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
         )
     user_balances = _get_balances(db, user_id)
     if order.direction == Direction.BUY:
-        required_rub = order.qty * order.price
-        if user_balances.get("RUB", 0) < required_rub:
-            raise HTTPException(
-                status_code=400,
-                detail=HTTPValidationError(detail=[ValidationError(loc=["balance"], msg="Insufficient RUB balance", type="value_error")])
-            )
+        if isinstance(order, LimitOrderBody):
+            required_rub = order.qty * order.price
+            if user_balances.get("RUB", 0) < required_rub:
+                raise HTTPException(
+                    status_code=400,
+                    detail=HTTPValidationError(detail=[ValidationError(loc=["balance"], msg="Insufficient RUB balance", type="value_error")])
+                )
+        else:
+            pass
     else:
         if user_balances.get(order.ticker, 0) < order.qty:
             raise HTTPException(
@@ -199,7 +202,7 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
         ticker=order.ticker,
         direction=order.direction,
         qty=order.qty,
-        price=order.price,
+        price=order.price if isinstance(order, LimitOrderBody) else None,
         status=OrderStatus.NEW,
     )
     db.add(db_order)
@@ -466,7 +469,7 @@ async def list_order(db: Session = Depends(get_db), current_user: User = Depends
         422: {"description": "Validation Error", "model": HTTPValidationError}
     }
 )
-async def get_orde_endpointr(
+async def get_order_endpoint(
     order_id: str = Path(..., title="Order Id", format="uuid4"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
