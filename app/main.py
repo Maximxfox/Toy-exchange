@@ -36,6 +36,7 @@ def initialize_test_users(db: Session):
     logger.info("Initializing test users")
     if not db.query(User_BD).filter(User_BD.name == "testuser").first():
         test_user = User_BD(
+            id = "358243f5-7e6c-4eb7-b9c3-df6ce49bf5ce",
             name="testuser",
             role=UserRole.USER,
             api_key="key-testuser-12345"
@@ -350,7 +351,7 @@ async def list_instruments(db: Session = Depends(get_db)):
              200: {"description": "Successful Response", "model": L2OrderBook},
              422: {"description": "Validation Error", "model": HTTPValidationError}
          })
-async def get_orderbook(ticker: str, limit: int = Query(10, le=25), db: Session = Depends(get_db)):
+async def get_orderbook_endpoint(ticker: str, limit: int = Query(10, le=25), db: Session = Depends(get_db)):
     logger.info(f"Orderbook endpoint called for ticker: {ticker}, limit: {limit}")
     return get_orderbook(db, ticker, limit)
 
@@ -414,7 +415,7 @@ async def get_balances(current_user: User = Depends(get_current_user), db: Sessi
         422: {"description": "Validation Error", "model": HTTPValidationError}
     }
 )
-async def create_order(
+async def create_order_endpoint(
     order: Union[LimitOrderBody, MarketOrderBody] = Body(..., title="Body"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -451,7 +452,7 @@ async def list_order(db: Session = Depends(get_db), current_user: User = Depends
         422: {"description": "Validation Error", "model": HTTPValidationError}
     }
 )
-async def get_order(
+async def get_orde_endpointr(
     order_id: str = Path(..., title="Order Id", format="uuid4"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -474,7 +475,7 @@ async def get_order(
         422: {"description": "Validation Error", "model": HTTPValidationError}
     }
 )
-async def cancel_order(order_id: str = Path(..., format="uuid4"), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def cancel_order_endpoint(order_id: str = Path(..., format="uuid4"), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     logger.info(f"Cancel order endpoint called for order: {order_id}, user: {current_user.id}")
     if not cancel_order(db, order_id):
         logger.warning(f"Order {order_id} not found for cancellation")
@@ -492,7 +493,7 @@ async def cancel_order(order_id: str = Path(..., format="uuid4"), current_user: 
         422: {"description": "Validation Error", "model": HTTPValidationError}
     }
 )
-async def delete_user(user_id: str = Path(..., format="uuid4"), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def delete_user_endpoint(user_id: str = Path(..., format="uuid4"), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     logger.info(f"Delete user endpoint called for user: {user_id}, by admin: {current_user.id}")
     if current_user.role != UserRole.ADMIN:
         logger.warning(f"Non-admin user {current_user.id} attempted to delete user {user_id}")
@@ -514,7 +515,7 @@ async def delete_user(user_id: str = Path(..., format="uuid4"), current_user: Us
         422: {"description": "Validation Error", "model": HTTPValidationError}
     }
 )
-async def add_instrument(
+async def add_instrument_endpoint(
     instrument: Instrument,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -538,7 +539,7 @@ async def add_instrument(
         422: {"description": "Validation Error", "model": HTTPValidationError}
     }
 )
-async def delete_instrument(
+async def delete_instrument_endpoint(
     ticker: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
