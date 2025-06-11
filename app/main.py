@@ -89,8 +89,8 @@ def get_orderbook(db: Session, ticker: str, limit: int):
         )
     ).order_by(Order_BD.price.asc()).limit(limit).all()
 
-    logger.debug(f"Raw bids: {[order.__dict__ for order in bids]}")
-    logger.debug(f"Raw asks: {[order.__dict__ for order in asks]}")
+    logger.info(f"Raw bids: {[order.__dict__ for order in bids]}")
+    logger.info(f"Raw asks: {[order.__dict__ for order in asks]}")
 
     return {
         "bid_levels": [{"price": order.price, "qty": order.qty - order.filled} for order in bids if order.price],
@@ -141,10 +141,10 @@ def execute_order(db: Session, new_order: Order_BD):
         if remaining_qty <= 0:
             break
         price = new_order.price if new_order.price else match_order.price
-        logger.debug(f"Matching with order ID: {match_order.id}, price: {price}")
+        logger.info(f"Matching with order ID: {match_order.id}, price: {price}")
         match_available = match_order.qty - match_order.filled
         matched_qty = min(remaining_qty, match_available)
-        logger.debug(f"Matched qty: {matched_qty}, new_order.filled: {new_order.filled}, match_order.filled: {match_order.filled}")
+        logger.info(f"Matched qty: {matched_qty}, new_order.filled: {new_order.filled}, match_order.filled: {match_order.filled}")
         new_order.filled += matched_qty
         match_order.filled += matched_qty
         new_order.status = (
