@@ -27,11 +27,11 @@ class Instrument_BD(Base):
 class Order_BD(Base):
     __tablename__ = "orders"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     ticker = Column(String, ForeignKey("instruments.ticker"), nullable=False)
     direction = Column(Enum(Direction), nullable=False)
     qty = Column(Integer, nullable=False)
-    price = Column(Integer, nullable=False)
+    price = Column(Integer)
     status = Column(Enum(OrderStatus), nullable=False, default=OrderStatus.NEW)
     timestamp = Column(DateTime, nullable=False, default=datetime.utcnow)
     filled = Column(Integer, default=0)
@@ -40,7 +40,7 @@ class Order_BD(Base):
 
 class Balance_BD(Base):
     __tablename__ = "balances"
-    user_id = Column(String, ForeignKey("users.id"), primary_key=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     ticker = Column(String, ForeignKey("instruments.ticker"), primary_key=True)
     amount = Column(Integer, nullable=False, default=0)
     user = relationship("User_BD", back_populates="balances")
