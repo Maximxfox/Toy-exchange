@@ -1,4 +1,5 @@
 from sqlalchemy.ext.declarative import declarative_base
+from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, Enum, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 import uuid
@@ -53,3 +54,8 @@ class Transaction_BD(Base):
     amount = Column(Integer, nullable=False)
     price = Column(Integer, nullable=False)
     timestamp = Column(DateTime, nullable=False, default=datetime.utcnow)
+    @property
+    def timestamp_aware(self):
+        if self.timestamp.tzinfo is None:
+            return self.timestamp.replace(tzinfo=timezone.utc)
+        return self.timestamp

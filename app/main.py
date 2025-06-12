@@ -87,7 +87,16 @@ def get_orderbook(db: Session, ticker: str, limit: int):
 
 def get_transactions(db: Session, ticker: str, limit: int):
     logger.info(f"Fetching transactions for ticker: {ticker}, limit: {limit}")
-    return db.query(Transaction_BD).filter(Transaction_BD.ticker == ticker).order_by(Transaction_BD.timestamp.desc()).limit(limit).all()
+    db_transactions = db.query(Transaction_BD).filter(Transaction_BD.ticker == ticker).order_by(Transaction_BD.timestamp.desc()).limit(limit).all()
+    transactions = []
+    for tx in db_transactions:
+        transactions.append(Transaction(
+            ticker=tx.ticker,
+            amount=tx.amount,
+            price=tx.price,
+            timestamp=tx.timestamp_aware
+        ))
+    return transactions
 
 
 def _get_balances(db: Session, user_id: str):
@@ -159,7 +168,7 @@ def execute_order(db: Session, new_order: Order_BD):
             update_balance(db, match_order.user_id, "RUB", -matched_qty * price)
             update_balance(db, match_order.user_id, new_order.ticker, matched_qty)
         remaining_qty -= matched_qty
-        db.commit()
+    db.commit()
 
 
 def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketOrderBody]):
@@ -477,7 +486,7 @@ async def get_order_endpoint(
     db: Session = Depends(get_db)
 ):
     order = get_order(db, order_id)
-    logger.info(f"Get order endpoint called for order: {order} and {order_id}, user: {current_user.id}")
+    logger.info(f"Get order endpoint called for order: {order} and {order_id}, user: {current_user.id} and {order.user_id}")
     if not order or order.user_id != current_user.id:
         logger.warning(f"Order {order_id} not found or not owned by user {current_user.id}")
         raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc=["order_id"], msg="Order not found", type="value_error")]).dict())
