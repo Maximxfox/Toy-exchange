@@ -124,7 +124,7 @@ def update_balance(db: Session, user_id: str, ticker: str, amount: int):
 def execute_order(db: Session, new_order: Order_BD):
     logger.info(f"Executing order ID: {new_order.id}, ticker: {new_order.ticker}, direction: {new_order.direction}, qty: {new_order.qty}, price: {new_order.price}")
     if new_order.status == OrderStatus.CANCELLED or new_order.status == OrderStatus.EXECUTED:
-        return
+        raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[ValidationError(loc=["order"], msg="Instrument not found", type="value_error")]).dict())
     opposite_direction = Direction.SELL if new_order.direction == Direction.BUY else Direction.BUY
     price_condition = (Order_BD.price <= new_order.price if new_order.direction == Direction.BUY else Order_BD.price >= new_order.price) \
         if new_order.price else True
@@ -140,12 +140,7 @@ def execute_order(db: Session, new_order: Order_BD):
     for match_order in matching_orders:
         if remaining_qty <= 0:
             break
-        if new_order.price is not None:
-            price = new_order.price
-        elif match_order.price is not None:
-            price = match_order.price
-        else:
-            continue
+        price = new_order.price if new_order.price else match_order.price
         logger.info(f"Matching with order ID: {match_order.id}, price: {price}")
         match_available = match_order.qty - match_order.filled
         matched_qty = min(remaining_qty, match_available)
@@ -183,7 +178,7 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
     if not db.query(Instrument_BD).filter(Instrument_BD.ticker == order.ticker).first():
         raise HTTPException(
             status_code=400,
-            detail=HTTPValidationError(detail=[ValidationError(loc=["ticker"], msg="Instrument not found", type="value_error")])
+            detail=HTTPValidationError(detail=[ValidationError(loc=["ticker"], msg="Instrument not found", type="value_error")]).dict()
         )
     user_balances = _get_balances(db, user_id)
     if order.direction == Direction.BUY:
@@ -192,16 +187,15 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
             if user_balances.get("RUB", 0) < required_rub:
                 raise HTTPException(
                     status_code=400,
-                    detail=HTTPValidationError(detail=[ValidationError(loc=["balance"], msg="Insufficient RUB balance", type="value_error")])
+                    detail=HTTPValidationError(detail=[ValidationError(loc=["balance"], msg="Insufficient RUB balance", type="value_error")]).dict()
                 )
         else:
             pass
     else:
-        if user_balances.get(order.ticker, 0) < order.qty:
-            raise HTTPException(
-                status_code=400,
-                detail=HTTPValidationError(detail=[ValidationError(loc=["balance"], msg=f"Insufficient {order.ticker} balance", type="value_error")])
-            )
+        available_balance = user_balances.get(order.ticker, 0)
+        if available_balance < order.qty:
+            logger.warning(f"Insufficient balance for sell order: available {available_balance}, requested {order.qty}")
+            raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[ValidationError(loc=["balance"], msg=f"Insufficient {order.ticker} balance: available {available_balance}, requested {order.qty}",type="value_error")]).dict())
     db_order = Order_BD(
         user_id=user_id,
         ticker=order.ticker,
@@ -247,11 +241,19 @@ def get_order(db: Session, order_id: str):
 def cancel_order(db: Session, order_id: str):
     logger.info(f"Cancelled order {order_id}")
     order = db.query(Order_BD).filter(Order_BD.id == order_id).first()
-    if order:
+    if not order:
+
+
+        logger.warning(f"Order {order_id} not found for cancellation")
+        return False
+    if order.status in [OrderStatus.EXECUTED, OrderStatus.PARTIALLY_EXECUTED]:
+        logger.warning(f"Cannot cancel order {order_id} with status {order.status}")
+        raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[ValidationError(loc=["order_id"], msg=f"Cannot cancel order with status {order.status}",type="value_error")]).dict())
+    if order.status == OrderStatus.NEW:
         order.status = OrderStatus.CANCELLED
         db.commit()
         return True
-    logger.warning(f"Order {order_id} not found for cancellation")
+    logger.warning(f"Order {order_id} has unexpected status {order.status}")
     return False
 
 def delete_user(db: Session, user_id: str):
