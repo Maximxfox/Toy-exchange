@@ -138,7 +138,7 @@ def execute_order(db: Session, new_order: Order_BD):
     for match_order in matching_orders:
         if remaining_qty <= 0:
             break
-        price = new_order.price if new_order.price else match_order.price
+        price = new_order.price if new_order.price is not None else match_order.price
         if price is None:
             raise HTTPException(
                 status_code=400,
@@ -238,11 +238,14 @@ def get_orders(db: Session, user_id: str):
     return result
 
 
-def get_order(db: Session, order_id: str):
+def get_order(db: Session, order_id: str, user_id: str):
     logger.info(f"Retrieved order {order_id}")
     order = db.query(Order_BD).filter(Order_BD.id == order_id).first()
     if not order:
         logger.warning(f"Order {order_id} not found in database")
+        return None
+    if str(order.user_id) != user_id:
+        logger.warning(f"Order {order_id} does not belong to user {user_id}")
         return None
     if order.price is not None:
         body = LimitOrderBody(direction=order.direction, ticker=order.ticker, qty=order.qty, price=order.price)
@@ -256,8 +259,6 @@ def cancel_order(db: Session, order_id: str):
     logger.info(f"Cancelled order {order_id}")
     order = db.query(Order_BD).filter(Order_BD.id == order_id).first()
     if not order:
-
-
         logger.warning(f"Order {order_id} not found for cancellation")
         return False
     if order.status in [OrderStatus.EXECUTED, OrderStatus.PARTIALLY_EXECUTED]:
@@ -500,9 +501,9 @@ async def get_order_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    order = get_order(db, order_id)
+    order = get_order(db, order_id, str(current_user.id))
     logger.info(f"Get order endpoint called for order: {order} and {order_id}, user: {current_user.id} and {order.user_id}")
-    if not order or order.user_id != current_user.id:
+    if not order:
         logger.warning(f"Order {order_id} not found or not owned by user {current_user.id}")
         raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc=["order_id"], msg="Order not found", type="value_error")]).dict())
     return order
