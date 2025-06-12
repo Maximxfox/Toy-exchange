@@ -48,8 +48,8 @@ def initialize_test_user(db: Session):
 
 
 def create_user(db: Session, user: NewUser):
-    logger.info(f"Creating user with name: {user.name}")
-    db_user = User_BD(name=user.name, role=UserRole.USER, api_key=f"key-{uuid4()}")
+    logger.info(f"Creating user")
+    db_user = User_BD(role=UserRole.USER, api_key=f"key-{uuid4()}")
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
@@ -123,8 +123,9 @@ def execute_order(db: Session, new_order: Order_BD):
     if new_order.status == OrderStatus.CANCELLED or new_order.status == OrderStatus.EXECUTED:
         raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[ValidationError(loc=["order"], msg="Instrument not found", type="value_error")]).dict())
     opposite_direction = Direction.SELL if new_order.direction == Direction.BUY else Direction.BUY
-    price_condition = (Order_BD.price <= new_order.price if new_order.direction == Direction.BUY else Order_BD.price >= new_order.price) \
-        if new_order.price else True
+    price_condition = ((Order_BD.price <= new_order.price) if new_order.direction == Direction.BUY else
+        (Order_BD.price >= new_order.price) if new_order.price else True
+    )
     order_by = Order_BD.price.asc() if new_order.direction == Direction.BUY else Order_BD.price.desc()
     matching_orders = (db.query(Order_BD).filter(and_(
                 Order_BD.ticker == new_order.ticker,
@@ -138,6 +139,11 @@ def execute_order(db: Session, new_order: Order_BD):
         if remaining_qty <= 0:
             break
         price = new_order.price if new_order.price else match_order.price
+        if price is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot execute market order - no available price"
+            )
         logger.info(f"Matching with order ID: {match_order.id}, price: {price}")
         match_available = match_order.qty - match_order.filled
         matched_qty = min(remaining_qty, match_available)
@@ -187,7 +193,17 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
                     detail=HTTPValidationError(detail=[ValidationError(loc=["balance"], msg="Insufficient RUB balance", type="value_error")]).dict()
                 )
         else:
-            pass
+            if not db.query(Order_BD).filter(
+                    and_(
+                        Order_BD.ticker == order.ticker,
+                        Order_BD.direction == Direction.SELL,
+                        Order_BD.status.in_([OrderStatus.NEW, OrderStatus.PARTIALLY_EXECUTED])
+                    )
+            ).first():
+                raise HTTPException(
+                    status_code=400,
+                    detail="No available sell orders for this instrument"
+                )
     else:
         available_balance = user_balances.get(order.ticker, 0)
         if available_balance < order.qty:
@@ -334,7 +350,7 @@ def get_current_user(authorization: Optional[str] = Header(default=None), db: Se
         )
     api_key = authorization[6:]
     user = db.query(User_BD).filter(User_BD.api_key == api_key).first()
-    logger.info(f"Authenticated user: {user.name} (ID: {user.id})")
+    logger.info(f"Authenticated (ID: {user.id})")
     if not user:
         logger.warning(f"No user found for API key: {api_key}")
         raise HTTPException(
@@ -353,7 +369,6 @@ def get_current_user(authorization: Optional[str] = Header(default=None), db: Se
               422: {"description": "Validation Error", "model": HTTPValidationError}
           })
 async def register(user: NewUser, db: Session = Depends(get_db)):
-    logger.info(f"Register endpoint called for user: {user.name}")
     return create_user(db, user)
 
 
