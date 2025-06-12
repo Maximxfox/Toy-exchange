@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from fastapi import FastAPI, Depends, HTTPException, Header, Query, Path, Body
 from models import *
 from sqlalchemy import create_engine, and_
@@ -33,18 +34,8 @@ def get_db():
         db.close()
 
 
-def initialize_test_users(db: Session):
+def initialize_test_user(db: Session):
     logger.info("Initializing test users")
-    if not db.query(User_BD).filter(User_BD.name == "testuser").first():
-        test_user = User_BD(
-            id = "358243f5-7e6c-4eb7-b9c3-df6ce49bf5ce",
-            name="testuser",
-            role=UserRole.USER,
-            api_key="key-testuser-12345"
-        )
-        db.add(test_user)
-        db.commit()
-        db.refresh(test_user)
     if not db.query(User_BD).filter(User_BD.name == "adminuser").first():
         admin_user = User_BD(
             name="adminuser",
@@ -75,7 +66,7 @@ def get_orderbook(db: Session, ticker: str, limit: int):
         and_(
             Order_BD.ticker == ticker,
             Order_BD.direction == Direction.BUY,
-            Order_BD.status.notin_([OrderStatus.CANCELLED, OrderStatus.EXECUTED]),
+            Order_BD.status.in_([OrderStatus.NEW, OrderStatus.PARTIALLY_EXECUTED]),
             Order_BD.qty > Order_BD.filled
         )
     ).order_by(Order_BD.price.desc()).limit(limit).all()
@@ -84,13 +75,10 @@ def get_orderbook(db: Session, ticker: str, limit: int):
         and_(
             Order_BD.ticker == ticker,
             Order_BD.direction == Direction.SELL,
-            Order_BD.status.notin_([OrderStatus.CANCELLED, OrderStatus.EXECUTED]),
+            Order_BD.status.in_([OrderStatus.NEW, OrderStatus.PARTIALLY_EXECUTED]),
             Order_BD.qty > Order_BD.filled
         )
     ).order_by(Order_BD.price.asc()).limit(limit).all()
-
-    logger.info(f"Raw bids: {[order.__dict__ for order in bids]}")
-    logger.info(f"Raw asks: {[order.__dict__ for order in asks]}")
 
     return {
         "bid_levels": [{"price": order.price, "qty": order.qty - order.filled} for order in bids if order.price],
@@ -157,7 +145,7 @@ def execute_order(db: Session, new_order: Order_BD):
             ticker=new_order.ticker,
             amount=matched_qty,
             price=price,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
         db.add(transaction)
         if new_order.direction == Direction.BUY:
@@ -171,7 +159,7 @@ def execute_order(db: Session, new_order: Order_BD):
             update_balance(db, match_order.user_id, "RUB", -matched_qty * price)
             update_balance(db, match_order.user_id, new_order.ticker, matched_qty)
         remaining_qty -= matched_qty
-    db.commit()
+        db.commit()
 
 
 def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketOrderBody]):
@@ -229,6 +217,7 @@ def get_order(db: Session, order_id: str):
     logger.info(f"Retrieved order {order_id}")
     order = db.query(Order_BD).filter(Order_BD.id == order_id).first()
     if not order:
+        logger.warning(f"Order {order_id} not found in database")
         return None
     if order.price is not None:
         body = LimitOrderBody(direction=order.direction, ticker=order.ticker, qty=order.qty, price=order.price)
@@ -322,7 +311,7 @@ async def startup_event():
     logger.info("Starting FastAPI application")
     db = SessionLocal()
     try:
-        initialize_test_users(db)
+        initialize_test_user(db)
     finally:
         db.close()
 
@@ -488,8 +477,8 @@ async def get_order_endpoint(
     db: Session = Depends(get_db)
 ):
     order = get_order(db, order_id)
-    logger.info(f"Get order endpoint called for order: {order_id}, user: {current_user.id}")
-    if not order or order.user_id != str(current_user.id):
+    logger.info(f"Get order endpoint called for order: {order} and {order_id}, user: {current_user.id}")
+    if not order or order.user_id != current_user.id:
         logger.warning(f"Order {order_id} not found or not owned by user {current_user.id}")
         raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc=["order_id"], msg="Order not found", type="value_error")]).dict())
     return order
