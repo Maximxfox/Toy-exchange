@@ -42,6 +42,7 @@ def get_db():
         db.close()
 
 
+
 def initialize_test_user(db: Session):
     logger.info("Initializing test users")
     if not db.query(User_BD).filter(User_BD.name == "adminuser").first():
