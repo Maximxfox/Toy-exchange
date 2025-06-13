@@ -344,18 +344,19 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
                     detail=HTTPValidationError(detail=[
                         ValidationError(loc=["balance"], msg="Insufficient RUB balance", type="value_error")
                     ]).dict())
-            else:
-                available_balance = user_balances.get(order.ticker, 0)
-                if available_balance < order.qty:
-                    logger.warning(
-                        f"Insufficient balance for sell order: available {available_balance}, requested {order.qty}")
-                raise HTTPException(
+    elif order.direction == Direction.SELL:
+        available_balance = user_balances.get(order.ticker, 0)
+        if available_balance < order.qty:
+            logger.warning(
+                f"Insufficient balance for sell order: available {available_balance}, requested {order.qty}")
+            raise HTTPException(
                 status_code=418,
                 detail=HTTPValidationError(detail=[
                     ValidationError(loc=["balance"],
                                     msg=f"Insufficient {order.ticker} balance: available {available_balance}, requested {order.qty}",
                                     type="value_error")
                 ]).dict())
+
     db_order = Order_BD(
         user_id=user_id,
         ticker=order.ticker,
@@ -371,6 +372,7 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
     db.commit()
     db.refresh(db_order)
     return db_order
+
 
 def get_orders(db: Session, user_id: str):
     logger.info(f"Retrieved orders for user {user_id}")
