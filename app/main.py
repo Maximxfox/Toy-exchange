@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timezone
 from fastapi import FastAPI, Depends, HTTPException, Header, Query, Path, Body
 from models import *
-from sqlalchemy import create_engine, and_
+from sqlalchemy import create_engine, text, and_
 from sqlalchemy.orm import sessionmaker, Session
 from models_bd import Base, User_BD, Instrument_BD, Order_BD, Balance_BD, Transaction_BD
 from models import (
@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 SQLALCHEMY_DATABASE_URL = "sqlite:///./toy_exchange.db"
 engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
 Base.metadata.drop_all(bind=engine)
+with engine.connect() as conn:
+    conn.execute(text("VACUUM"))
 Base.metadata.create_all(bind=engine)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def get_db():
