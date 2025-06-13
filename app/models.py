@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field, constr, field_validator
 from datetime import datetime, timezone
 from enum import Enum
 from uuid import UUID, uuid4
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class UserRole(str, Enum):
@@ -90,7 +90,7 @@ class LimitOrder(BaseModel):
    id: UUID = Field(..., title="Id", json_schema_extra={"format": "uuid4"})
    status: OrderStatus
    user_id: UUID = Field(..., title="User Id", json_schema_extra={"format": "uuid4"})
-   timestamp: datetime = Field(..., title="Timestamp")
+   timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), title="Timestamp")
    body: LimitOrderBody
    filled: int = Field(0, title="Filled")
    @field_validator('timestamp')
@@ -110,7 +110,7 @@ class MarketOrder(BaseModel):
    id: UUID = Field(..., title="Id", json_schema_extra={"format": "uuid4"})
    status: OrderStatus
    user_id: UUID = Field(..., title="User Id", json_schema_extra={"format": "uuid4"})
-   timestamp: datetime = Field(..., title="Timestamp")
+   timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), title="Timestamp")
    body: MarketOrderBody
    @field_validator('timestamp')
    def ensure_timezone_utc(cls, v):
@@ -131,7 +131,7 @@ class Transaction(BaseModel):
    ticker: str = Field(..., title="Ticker")
    amount: int = Field(..., title="Amount")
    price: int = Field(..., title="Price")
-   timestamp: datetime = Field(..., title="Timestamp")
+   timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), title="Timestamp")
 
 
 class User(BaseModel):
