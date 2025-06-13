@@ -125,16 +125,19 @@ def execute_order(db: Session, new_order: Order_BD):
     if new_order.status == OrderStatus.CANCELLED or new_order.status == OrderStatus.EXECUTED:
         raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[ValidationError(loc=["order"], msg="Instrument not found", type="value_error")]).dict())
     opposite_direction = Direction.SELL if new_order.direction == Direction.BUY else Direction.BUY
-    price_condition = ((Order_BD.price <= new_order.price) if new_order.direction == Direction.BUY else
-        (Order_BD.price >= new_order.price) if new_order.price else True
-    )
+    if new_order.price is None:
+        price_condition = True
+    else:
+        price_condition = (
+            (Order_BD.price <= new_order.price) if new_order.direction == Direction.BUY
+            else (Order_BD.price >= new_order.price)
+        )
     order_by = Order_BD.price.asc() if new_order.direction == Direction.BUY else Order_BD.price.desc()
     matching_orders = (db.query(Order_BD).filter(and_(
                 Order_BD.ticker == new_order.ticker,
                 Order_BD.direction == opposite_direction,
                 Order_BD.status.in_([OrderStatus.NEW, OrderStatus.PARTIALLY_EXECUTED]),
-                price_condition
-            )
+                price_condition)
     ).order_by(order_by).all())
     remaining_qty = new_order.qty - new_order.filled
     for match_order in matching_orders:
