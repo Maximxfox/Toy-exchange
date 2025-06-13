@@ -198,15 +198,22 @@ def execute_order(db: Session, new_order: Order_BD):
         )
         db.add(transaction)
         if new_order.direction == Direction.BUY:
-            update_balance(db, new_order.user_id, "RUB", -matched_qty * price)
             update_balance(db, new_order.user_id, new_order.ticker, matched_qty)
+            if new_order.price is not None:
+                refund = (new_order.price - price) * matched_qty
+                if refund > 0:
+                    update_balance(db, new_order.user_id, "RUB", refund)
+
             update_balance(db, match_order.user_id, "RUB", matched_qty * price)
             update_balance(db, match_order.user_id, new_order.ticker, -matched_qty)
         else:
             update_balance(db, new_order.user_id, "RUB", matched_qty * price)
-            update_balance(db, new_order.user_id, new_order.ticker, -matched_qty)
-            update_balance(db, match_order.user_id, "RUB", -matched_qty * price)
             update_balance(db, match_order.user_id, new_order.ticker, matched_qty)
+
+            if match_order.price is not None:
+                refund = (match_order.price - price) * matched_qty
+                if refund > 0:
+                    update_balance(db, match_order.user_id, "RUB", refund)
         remaining_qty -= matched_qty
 
 
@@ -254,9 +261,34 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
                 raise HTTPException(status_code=400, detail="Not enough liquidity to execute market BUY")
             if user_balances.get("RUB", 0) < cost:
                 raise HTTPException(status_code=400, detail="Insufficient RUB balance for market BUY")
+            update_balance(db, user_id, "RUB", -cost)
 
 
-    else:
+    else: # SELL
+        bids = (
+            db.query(Order_BD)
+            .filter(and_(
+                Order_BD.ticker == order.ticker,
+                Order_BD.direction == Direction.BUY,
+                Order_BD.status.in_([OrderStatus.NEW, OrderStatus.PARTIALLY_EXECUTED]),
+                Order_BD.qty > Order_BD.filled
+            ))
+            .order_by(Order_BD.price.desc())
+            .all()
+        )
+        need = order.qty
+        for b in bids:
+            free = b.qty - b.filled
+            take = min(free, need)
+            need -= take
+            if need == 0:
+                break
+        if need > 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Not enough liquidity to execute market SELL"
+            )
+
         available_balance = user_balances.get(order.ticker, 0)
         if available_balance < order.qty:
             raise HTTPException(
