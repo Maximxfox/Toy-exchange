@@ -422,7 +422,6 @@ def get_order(db: Session, order_id: str, user_id: str):
         body = MarketOrderBody(direction=order.direction, ticker=order.ticker, qty=order.qty)
         return MarketOrder(id=order.id, status=order.status, user_id=order.user_id, timestamp=order.timestamp_aware, body=body)
 
-
 def cancel_order(db: Session, order_id: str):
     logger.info(f"Cancelled order {order_id}")
     order = db.query(Order_BD).filter(Order_BD.id == order_id).first()
