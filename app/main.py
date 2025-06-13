@@ -198,14 +198,11 @@ def execute_order(db: Session, new_order: Order_BD):
         )
         db.add(transaction)
         if new_order.direction == Direction.BUY:
-            update_balance(db, new_order.user_id, "RUB", -matched_qty * price)
             update_balance(db, new_order.user_id, new_order.ticker, matched_qty)
             update_balance(db, match_order.user_id, "RUB", matched_qty * price)
             update_balance(db, match_order.user_id, new_order.ticker, -matched_qty)
         else:
             update_balance(db, new_order.user_id, "RUB", matched_qty * price)
-            update_balance(db, new_order.user_id, new_order.ticker, -matched_qty)
-            update_balance(db, match_order.user_id, "RUB", -matched_qty * price)
             update_balance(db, match_order.user_id, new_order.ticker, matched_qty)
         remaining_qty -= matched_qty
 
