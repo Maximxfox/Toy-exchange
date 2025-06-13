@@ -1,6 +1,6 @@
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Enum, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Enum, DateTime, ForeignKey, CheckConstraint
 from sqlalchemy.orm import relationship
 import uuid
 from datetime import datetime
@@ -45,7 +45,9 @@ class Balance_BD(Base):
     ticker = Column(String, ForeignKey("instruments.ticker"), primary_key=True)
     amount = Column(Integer, nullable=False, default=0)
     user = relationship("User_BD", back_populates="balances")
-
+    __table_args__ = (
+        CheckConstraint('amount >= 0', name='ck_balance_non_negative'),
+    )
 
 class Transaction_BD(Base):
     __tablename__ = "transactions"

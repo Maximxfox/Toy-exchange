@@ -4,6 +4,7 @@ from fastapi import FastAPI, Depends, HTTPException, Header, Query, Path, Body
 from models import *
 from sqlalchemy import create_engine, text, and_
 from sqlalchemy.orm import sessionmaker, Session
+from collections import defaultdict
 from models_bd import Base, User_BD, Instrument_BD, Order_BD, Balance_BD, Transaction_BD
 from models import (
     NewUser, User, Instrument, L2OrderBook, Transaction,
@@ -62,6 +63,18 @@ def get_instruments(db):
     logger.info("Fetching all instruments")
     return db.query(Instrument_BD).all()
 
+def _aggregate(orders, reverse: bool):
+    bucket = defaultdict(int)
+    for o in orders:
+        if o.price is None:
+            continue
+        free_qty = o.qty - o.filled
+        if free_qty > 0:
+            bucket[o.price] += free_qty
+    ordered = sorted(bucket.items(), key=lambda x: (-x[0] if reverse else x[0]))
+    return [{"price": p, "qty": q} for p, q in ordered]
+
+
 def get_orderbook(db: Session, ticker: str, limit: int):
     logger.info(f"Fetching order book for ticker: {ticker}, limit: {limit}")
     bids = db.query(Order_BD).filter(
@@ -71,7 +84,7 @@ def get_orderbook(db: Session, ticker: str, limit: int):
             Order_BD.status.in_([OrderStatus.NEW, OrderStatus.PARTIALLY_EXECUTED]),
             Order_BD.qty > Order_BD.filled
         )
-    ).order_by(Order_BD.price.desc()).limit(limit).all()
+    ).all()
 
     asks = db.query(Order_BD).filter(
         and_(
@@ -80,12 +93,12 @@ def get_orderbook(db: Session, ticker: str, limit: int):
             Order_BD.status.in_([OrderStatus.NEW, OrderStatus.PARTIALLY_EXECUTED]),
             Order_BD.qty > Order_BD.filled
         )
-    ).order_by(Order_BD.price.asc()).limit(limit).all()
+    ).all()
 
-    return {
-        "bid_levels": [{"price": order.price, "qty": order.qty - order.filled} for order in bids if order.price],
-        "ask_levels": [{"price": order.price, "qty": order.qty - order.filled} for order in asks if order.price]
-    }
+    bid_levels = _aggregate(bids, reverse=True)[:limit]
+    ask_levels = _aggregate(asks, reverse=False)[:limit]
+
+    return {"bid_levels": bid_levels, "ask_levels": ask_levels}
 
 def get_transactions(db: Session, ticker: str, limit: int):
     logger.info(f"Fetching transactions for ticker: {ticker}, limit: {limit}")
@@ -109,9 +122,12 @@ def _get_balances(db: Session, user_id: str):
 
 def update_balance(db: Session, user_id: str, ticker: str, amount: int):
     logger.info(f"Updating balance for user {user_id}, ticker {ticker}, amount {amount}")
-    balance = db.query(Balance_BD).filter(
-        and_(Balance_BD.user_id == user_id, Balance_BD.ticker == ticker)
-    ).first()
+    balance = (
+        db.query(Balance_BD)
+        .with_for_update()
+        .filter(and_(Balance_BD.user_id == user_id, Balance_BD.ticker == ticker))
+        .one_or_none()
+    )
     if balance:
         balance.amount += amount
     else:
@@ -179,7 +195,6 @@ def execute_order(db: Session, new_order: Order_BD):
             update_balance(db, match_order.user_id, "RUB", -matched_qty * price)
             update_balance(db, match_order.user_id, new_order.ticker, matched_qty)
         remaining_qty -= matched_qty
-    db.commit()
 
 
 def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketOrderBody]):
@@ -198,34 +213,52 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
                     detail=HTTPValidationError(detail=[ValidationError(loc=["balance"], msg="Insufficient RUB balance", type="value_error")]).dict()
                 )
         else:
-            if not db.query(Order_BD).filter(
-                    and_(
-                        Order_BD.ticker == order.ticker,
-                        Order_BD.direction == Direction.SELL,
-                        Order_BD.status.in_([OrderStatus.NEW, OrderStatus.PARTIALLY_EXECUTED])
-                    )
-            ).first():
+            asks = (
+                db.query(Order_BD)
+                .filter(and_(Order_BD.ticker == order.ticker,
+                             Order_BD.direction == Direction.SELL,
+                             Order_BD.status.in_([OrderStatus.NEW, OrderStatus.PARTIALLY_EXECUTED])))
+                .order_by(Order_BD.price.asc())
+                .all()
+            )
+            cost, need = 0, order.qty
+            for a in asks:
+                free = a.qty - a.filled
+                take = min(free, need)
+                cost += take * a.price
+                need -= take
+                if need == 0:
+                    break
+
+            if need > 0:
                 raise HTTPException(
                     status_code=400,
-                    detail="No available sell orders for this instrument"
+                    detail="Not enough liquidity to execute market BUY"
                 )
+            if user_balances.get("RUB", 0) < cost:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Insufficient RUB balance for market BUY"
+                )
+
     else:
         available_balance = user_balances.get(order.ticker, 0)
         if available_balance < order.qty:
             logger.warning(f"Insufficient balance for sell order: available {available_balance}, requested {order.qty}")
             raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[ValidationError(loc=["balance"], msg=f"Insufficient {order.ticker} balance: available {available_balance}, requested {order.qty}",type="value_error")]).dict())
-    db_order = Order_BD(
-        user_id=user_id,
-        ticker=order.ticker,
-        direction=order.direction,
-        qty=order.qty,
-        price=order.price if isinstance(order, LimitOrderBody) else None,
-        status=OrderStatus.NEW,
-    )
-    db.add(db_order)
-    db.commit()
-    db.refresh(db_order)
-    execute_order(db, db_order)
+    with db.begin():
+        db_order = Order_BD(
+            user_id=user_id,
+            ticker=order.ticker,
+            direction=order.direction,
+            qty=order.qty,
+            price=order.price if isinstance(order, LimitOrderBody) else None,
+            status=OrderStatus.NEW,
+        )
+        db.add(db_order)
+        db.flush()
+        execute_order(db, db_order)
+        db.refresh(db_order)
     return db_order
 
 
