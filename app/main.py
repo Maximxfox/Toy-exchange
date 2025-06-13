@@ -4,6 +4,7 @@ from fastapi import FastAPI, Depends, HTTPException, Header, Query, Path, Body
 from models import *
 from sqlalchemy import create_engine, text, and_
 from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.pool import NullPool
 from collections import defaultdict
 from models_bd import Base, User_BD, Instrument_BD, Order_BD, Balance_BD, Transaction_BD
 from models import (
@@ -23,7 +24,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 SQLALCHEMY_DATABASE_URL = "sqlite:///./toy_exchange.db"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+engine = create_engine(
+    "sqlite:///./toy_exchange.db",
+    connect_args={"check_same_thread": False},
+    poolclass=NullPool,
+)
 Base.metadata.drop_all(bind=engine)
 with engine.connect() as conn:
     conn.execute(text("VACUUM"))
@@ -133,7 +138,7 @@ def update_balance(db: Session, user_id: str, ticker: str, amount: int):
     else:
         balance = Balance_BD(user_id=user_id, ticker=ticker, amount=amount)
         db.add(balance)
-    db.commit()
+    db.flush()
 
 
 def execute_order(db: Session, new_order: Order_BD):
@@ -246,19 +251,22 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
         if available_balance < order.qty:
             logger.warning(f"Insufficient balance for sell order: available {available_balance}, requested {order.qty}")
             raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[ValidationError(loc=["balance"], msg=f"Insufficient {order.ticker} balance: available {available_balance}, requested {order.qty}",type="value_error")]).dict())
-    with db.begin_nested():
-        db_order = Order_BD(
-            user_id=user_id,
-            ticker=order.ticker,
-            direction=order.direction,
-            qty=order.qty,
-            price=order.price if isinstance(order, LimitOrderBody) else None,
-            status=OrderStatus.NEW,
-        )
-        db.add(db_order)
-        db.flush()
-        execute_order(db, db_order)
-        db.refresh(db_order)
+    db_order = Order_BD(
+        user_id=user_id,
+        ticker=order.ticker,
+        direction=order.direction,
+        qty=order.qty,
+        price=getattr(order, "price", None),
+        status=OrderStatus.NEW,
+        timestamp=datetime.now(timezone.utc)
+    )
+
+    db.add(db_order)
+    db.flush()
+    execute_order(db, db_order)
+    db.commit()
+
+    db.refresh(db_order)
     return db_order
 
 

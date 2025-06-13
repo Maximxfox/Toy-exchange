@@ -2,6 +2,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, Enum, DateTime, ForeignKey, CheckConstraint
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 import uuid
 from datetime import datetime
 from models import UserRole, Direction, OrderStatus
@@ -34,7 +35,11 @@ class Order_BD(Base):
     qty = Column(Integer, nullable=False)
     price = Column(Integer)
     status = Column(Enum(OrderStatus), nullable=False, default=OrderStatus.NEW)
-    timestamp = Column(DateTime(timezone=True), nullable=False)
+    timestamp = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
     filled = Column(Integer, default=0)
     user = relationship("User_BD", back_populates="orders")
 
@@ -55,4 +60,8 @@ class Transaction_BD(Base):
     ticker = Column(String, ForeignKey("instruments.ticker"), nullable=False)
     amount = Column(Integer, nullable=False)
     price = Column(Integer, nullable=False)
-    timestamp = Column(DateTime(timezone=True), nullable=False)
+    timestamp = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
