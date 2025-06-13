@@ -440,8 +440,6 @@ def add_instrument(db: Session, instrument: Instrument):
         )
         db.add(balance)
     logger.info(f"Successfully added instrument {instrument.ticker}")
-    db_instrument = Instrument_BD(name=instrument.name, ticker=instrument.ticker)
-    db.add(db_instrument)
     db.commit()
     return True
 
@@ -450,9 +448,20 @@ def delete_instrument(db: Session, ticker: str):
     logger.info(f"Deleted instrument {ticker}")
     instrument = db.query(Instrument_BD).filter(Instrument_BD.ticker == ticker).first()
     if instrument:
+        orders_count = db.query(Order_BD) \
+            .filter(Order_BD.ticker == ticker) \
+            .delete()
+        logger.info(f"Deleted {orders_count} orders for instrument {ticker}")
+        balances_count = db.query(Balance_BD) \
+            .filter(Balance_BD.ticker == ticker) \
+            .delete()
+        logger.info(f"Deleted {balances_count} user balances for instrument {ticker}")
+        db.delete(instrument)
+        logger.info(f"Successfully deleted instrument {ticker}")
         db.delete(instrument)
         db.commit()
         return True
+    logger.warning(f"Instrument {ticker} not found, nothing to delete")
     return False
 
 def deposit(db: Session, body: Body_deposit_api_v1_admin_balance_deposit_post):
