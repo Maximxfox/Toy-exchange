@@ -1,6 +1,6 @@
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Enum, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Enum, DateTime, ForeignKey, CheckConstraint
 from sqlalchemy.orm import relationship
 import uuid
 from datetime import datetime
@@ -34,7 +34,7 @@ class Order_BD(Base):
     qty = Column(Integer, nullable=False)
     price = Column(Integer)
     status = Column(Enum(OrderStatus), nullable=False, default=OrderStatus.NEW)
-    timestamp = Column(DateTime, nullable=False, default=datetime.now(timezone.utc))
+    timestamp = Column(DateTime(timezone=True), nullable=False)
     filled = Column(Integer, default=0)
     user = relationship("User_BD", back_populates="orders")
 
@@ -45,7 +45,9 @@ class Balance_BD(Base):
     ticker = Column(String, ForeignKey("instruments.ticker"), primary_key=True)
     amount = Column(Integer, nullable=False, default=0)
     user = relationship("User_BD", back_populates="balances")
-
+    __table_args__ = (
+        CheckConstraint('amount >= 0', name='ck_balance_non_negative'),
+    )
 
 class Transaction_BD(Base):
     __tablename__ = "transactions"
@@ -53,9 +55,4 @@ class Transaction_BD(Base):
     ticker = Column(String, ForeignKey("instruments.ticker"), nullable=False)
     amount = Column(Integer, nullable=False)
     price = Column(Integer, nullable=False)
-    timestamp = Column(DateTime, nullable=False, default=datetime.now(timezone.utc))
-    @property
-    def timestamp_aware(self):
-        if self.timestamp.tzinfo is None:
-            return self.timestamp.replace(tzinfo=timezone.utc)
-        return self.timestamp
+    timestamp = Column(DateTime(timezone=True), nullable=False)
