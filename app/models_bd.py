@@ -34,7 +34,7 @@ class Order_BD(Base):
     qty = Column(Integer, nullable=False)
     price = Column(Integer)
     status = Column(Enum(OrderStatus), nullable=False, default=OrderStatus.NEW)
-    timestamp = Column(DateTime, nullable=False, default=datetime.utcnow)
+    timestamp = Column(DateTime(timezone=True), nullable=False)
     filled = Column(Integer, default=0)
     user = relationship("User_BD", back_populates="orders")
 
