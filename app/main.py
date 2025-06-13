@@ -50,8 +50,8 @@ def initialize_test_user(db: Session):
 
 
 def create_user(db: Session, user: NewUser):
-    logger.info(f"Creating user")
-    db_user = User_BD(role=UserRole.USER, api_key=f"key-{uuid4()}")
+    logger.info(f"Creating user with name: {user.name}")
+    db_user = User_BD(name=user.name, role=UserRole.USER, api_key=f"key-{uuid4()}")
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
@@ -353,7 +353,7 @@ def get_current_user(authorization: Optional[str] = Header(default=None), db: Se
         )
     api_key = authorization[6:]
     user = db.query(User_BD).filter(User_BD.api_key == api_key).first()
-    logger.info(f"Authenticated (ID: {user.id})")
+    logger.info(f"Authenticated user: {user.name} (ID: {user.id})")
     if not user:
         logger.warning(f"No user found for API key: {api_key}")
         raise HTTPException(

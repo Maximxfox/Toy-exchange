@@ -12,7 +12,7 @@ Base = declarative_base()
 class User_BD(Base):
     __tablename__ = "users"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    name = Column(String)
+    name = Column(String, nullable=False)
     role = Column(Enum(UserRole), nullable=False, default=UserRole.USER)
     api_key = Column(String, unique=True, nullable=False, default=lambda: f"key-{uuid.uuid4()}")
     orders = relationship("Order_BD", back_populates="user", cascade="all, delete-orphan")
