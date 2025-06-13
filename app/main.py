@@ -130,7 +130,6 @@ def get_orderbook(db: Session, ticker: str, limit: int):
             Order_BD.qty > Order_BD.filled
         )
     ).all()
-
     bid_levels = _aggregate(bids, reverse=True)[:limit]
     ask_levels = _aggregate(asks, reverse=False)[:limit]
 
