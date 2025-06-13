@@ -59,6 +59,21 @@ def create_user(db: Session, user: NewUser):
     logger.info(f"Creating user with name: ")
     db_user = User_BD(name=user.name, role=UserRole.USER, api_key=f"key-{uuid4()}")
     db.add(db_user)
+    db.flush()
+    instruments = db.query(Instrument_BD).all()
+    for instrument in instruments:
+        balance = Balance_BD(
+            user_id=str(db_user.id),
+            ticker=instrument.ticker,
+            amount=0
+        )
+        db.add(balance)
+    rub_balance = Balance_BD(
+        user_id=str(db_user.id),
+        ticker="RUB",
+        amount=0
+    )
+    db.add(rub_balance)
     db.commit()
     db.refresh(db_user)
     return db_user
@@ -385,7 +400,6 @@ def cancel_order(db: Session, order_id: str):
         logger.warning(f"Order {order_id} not found for cancellation")
         raise HTTPException(status_code=400, detail=HTTPValidationError(
             detail=[ValidationError(loc=["amount"], msg="Cannot cancel market order", type="value_error")]).dict())
-        return False
     if order.price is None:
         logger.warning(f"Cannot cancel market order {order_id}")
         raise HTTPException(status_code=400, detail=HTTPValidationError(
@@ -424,12 +438,23 @@ def add_instrument(db: Session, instrument: Instrument):
     if existing:
         logger.warning(f"Instrument with ticker {instrument.ticker} already exists")
         return False
-    else:
-        logger.info(f"Successfully added instrument {instrument.ticker}")
-        db_instrument = Instrument_BD(name=instrument.name, ticker=instrument.ticker)
-        db.add(db_instrument)
-        db.commit()
-        return True
+    db_instrument = Instrument_BD(name=instrument.name, ticker=instrument.ticker)
+    db.add(db_instrument)
+    db.flush()
+    users = db.query(User_BD).all()
+    for user in users:
+        balance = Balance_BD(
+            user_id=str(user.id),
+            ticker=instrument.ticker,
+            amount=0
+        )
+        db.add(balance)
+    logger.info(f"Successfully added instrument {instrument.ticker}")
+    db_instrument = Instrument_BD(name=instrument.name, ticker=instrument.ticker)
+    db.add(db_instrument)
+    db.commit()
+    return True
+
 
 def delete_instrument(db: Session, ticker: str):
     logger.info(f"Deleted instrument {ticker}")
