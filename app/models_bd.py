@@ -55,9 +55,4 @@ class Transaction_BD(Base):
     ticker = Column(String, ForeignKey("instruments.ticker"), nullable=False)
     amount = Column(Integer, nullable=False)
     price = Column(Integer, nullable=False)
-    timestamp = Column(DateTime, nullable=False, default=datetime.utcnow)
-    @property
-    def timestamp_aware(self):
-        if self.timestamp.tzinfo is None:
-            return self.timestamp.replace(tzinfo=timezone.utc)
-        return self.timestamp
+    timestamp = Column(DateTime(timezone=True), nullable=False)
