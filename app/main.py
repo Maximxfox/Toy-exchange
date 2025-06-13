@@ -261,7 +261,7 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
                 if need == 0:
                     break
             if need > 0:
-                raise HTTPException(detail=HTTPValidationError(detail=[ValidationError(loc=["ticker"], msg="Not enough liquidity to execute market BUY", type="value_error")]).dict())
+                raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[ValidationError(loc=["ticker"], msg="Not enough liquidity to execute market BUY", type="value_error")]).dict())
             if user_balances.get("RUB", 0) < cost:
                 raise HTTPException(
                     status_code=400,
