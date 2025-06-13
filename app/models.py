@@ -1,5 +1,6 @@
 from typing import *
-from pydantic import BaseModel, Field, constr
+from pydantic import BaseModel, Field, constr, field_validator
+from datetime import datetime, timezone
 from enum import Enum
 from uuid import UUID, uuid4
 from datetime import datetime
@@ -92,6 +93,11 @@ class LimitOrder(BaseModel):
    timestamp: datetime = Field(..., title="Timestamp")
    body: LimitOrderBody
    filled: int = Field(0, title="Filled")
+   @field_validator('timestamp')
+   def ensure_timezone_utc(cls, v):
+      if v.tzinfo is None:
+         return v.replace(tzinfo=timezone.utc)
+      return v.astimezone(timezone.utc)
 
 
 class MarketOrderBody(BaseModel):
@@ -106,6 +112,11 @@ class MarketOrder(BaseModel):
    user_id: UUID = Field(..., title="User Id", json_schema_extra={"format": "uuid4"})
    timestamp: datetime = Field(..., title="Timestamp")
    body: MarketOrderBody
+   @field_validator('timestamp')
+   def ensure_timezone_utc(cls, v):
+      if v.tzinfo is None:
+         return v.replace(tzinfo=timezone.utc)
+      return v.astimezone(timezone.utc)
 
 
 class NewUser(BaseModel):

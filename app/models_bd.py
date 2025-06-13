@@ -34,7 +34,7 @@ class Order_BD(Base):
     qty = Column(Integer, nullable=False)
     price = Column(Integer)
     status = Column(Enum(OrderStatus), nullable=False, default=OrderStatus.NEW)
-    timestamp = Column(DateTime, nullable=False, default=datetime.utcnow)
+    timestamp = Column(DateTime, nullable=False, default=datetime.now(timezone.utc))
     filled = Column(Integer, default=0)
     user = relationship("User_BD", back_populates="orders")
 
@@ -53,7 +53,7 @@ class Transaction_BD(Base):
     ticker = Column(String, ForeignKey("instruments.ticker"), nullable=False)
     amount = Column(Integer, nullable=False)
     price = Column(Integer, nullable=False)
-    timestamp = Column(DateTime, nullable=False, default=datetime.utcnow)
+    timestamp = Column(DateTime, nullable=False, default=datetime.now(timezone.utc))
     @property
     def timestamp_aware(self):
         if self.timestamp.tzinfo is None:
