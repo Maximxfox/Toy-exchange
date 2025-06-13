@@ -46,8 +46,15 @@ class Order_BD(Base):
     @property
     def timestamp_aware(self) -> datetime:
         ts = self.timestamp
-        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+        if isinstance(ts, str):
+            try:
+                ts = datetime.fromisoformat(ts)
+            except ValueError:
+                ts = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S.%f")
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
 
+        return ts
 
 class Balance_BD(Base):
     __tablename__ = "balances"
@@ -72,6 +79,13 @@ class Transaction_BD(Base):
     )
 
     @property
-    def timestamp_aware(self):
+    def timestamp_aware(self) -> datetime:      # тот же приём
         ts = self.timestamp
-        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+        if isinstance(ts, str):
+            try:
+                ts = datetime.fromisoformat(ts)
+            except ValueError:
+                ts = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S.%f")
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return ts
