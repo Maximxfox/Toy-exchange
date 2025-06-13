@@ -441,10 +441,6 @@ def cancel_order(db: Session, order_id: str):
             detail=[ValidationError(loc=["amount"], msg="annot cancel executed, partially executed or cancelled order", type="value_error")]).dict())
     remaining = order.qty - order.filled
     if order.status == OrderStatus.NEW and remaining > 0:
-        if order.direction == Direction.BUY:
-            update_balance(db, order.user_id, "RUB", remaining * order.price)
-        else:
-            update_balance(db, order.user_id, order.ticker, remaining)
         order.status = OrderStatus.CANCELLED
         db.commit()
         return True
