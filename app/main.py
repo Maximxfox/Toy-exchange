@@ -125,19 +125,28 @@ def _get_balances(db: Session, user_id: str):
     return {b.ticker: b.amount for b in balances}
 
 
-def update_balance(db: Session, user_id: str, ticker: str, amount: int):
-    logger.info(f"Updating balance for user {user_id}, ticker {ticker}, amount {amount}")
+def update_balance(db: Session, user_id: str, ticker: str, amount: int) -> None:
     balance = (
         db.query(Balance_BD)
         .with_for_update()
-        .filter(and_(Balance_BD.user_id == user_id, Balance_BD.ticker == ticker))
+        .filter(and_(Balance_BD.user_id == user_id,
+                     Balance_BD.ticker == ticker))
         .one_or_none()
     )
+
     if balance:
-        balance.amount += amount
+        new_amount = balance.amount + amount
+        if new_amount < 0:
+            raise HTTPException(status_code=400,
+                                detail=f"Insufficient {ticker} balance")
+        balance.amount = new_amount
     else:
+        if amount < 0:
+            raise HTTPException(status_code=400,
+                                detail=f"Insufficient {ticker} balance")
         balance = Balance_BD(user_id=user_id, ticker=ticker, amount=amount)
         db.add(balance)
+
     db.flush()
 
 
@@ -217,6 +226,8 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
                     detail=HTTPValidationError(detail=[
                         ValidationError(loc=["balance"], msg="Insufficient RUB balance", type="value_error")]).dict()
                 )
+            update_balance(db, user_id, "RUB", -required_rub)
+
         else:  # MarketOrderBody
             asks = (
                 db.query(Order_BD)
@@ -257,6 +268,7 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
                         type="value_error")]
                 ).dict()
             )
+        update_balance(db, user_id, order.ticker, -order.qty)
     db_order = Order_BD(
         user_id=user_id,
         ticker=order.ticker,
@@ -281,12 +293,24 @@ def get_orders(db: Session, user_id: str):
     orders = db.query(Order_BD).filter(Order_BD.user_id == user_id).all()
     result = []
     for order in orders:
+        timestamp = order.timestamp_aware
         if order.price is not None:
             body = LimitOrderBody(direction=order.direction, ticker=order.ticker, qty=order.qty, price=order.price)
-            result.append(LimitOrder(id=order.id, status=order.status, user_id=order.user_id, timestamp=order.timestamp, body=body, filled=order.filled))
+            result.append(LimitOrder(
+                id=order.id,
+                status=order.status,
+                user_id=order.user_id,
+                timestamp=timestamp,
+                body=body,
+                filled=order.filled))
         else:
             body = MarketOrderBody(direction=order.direction, ticker=order.ticker, qty=order.qty)
-            result.append(MarketOrder(id=order.id, status=order.status, user_id=order.user_id, timestamp=order.timestamp, body=body))
+            result.append(MarketOrder(
+                id=order.id,
+                status=order.status,
+                user_id=order.user_id,
+                timestamp=timestamp,
+                body=body))
     return result
 
 
@@ -316,9 +340,10 @@ def cancel_order(db: Session, order_id: str):
     if order.price is None:
         logger.warning(f"Cannot cancel market order {order_id}")
         raise HTTPException(status_code=400, detail="Cannot cancel market order")
-    if order.status == OrderStatus.EXECUTED or order.filled == order.qty:
-        logger.warning(f"Cannot cancel already executed order {order_id}")
-        raise HTTPException(status_code=400, detail="Cannot cancel already executed order")
+    if order.status in (
+        OrderStatus.EXECUTED, OrderStatus.PARTIALLY_EXECUTED, OrderStatus.CANCELLED) or order.filled > 0:
+        logger.warning(f"Cannot cancel already executed or partially executed order {order_id}")
+        raise HTTPException(status_code=400, detail="Cannot cancel executed, partially executed or cancelled order")
     remaining = order.qty - order.filled
     if order.status == OrderStatus.NEW and remaining > 0:
         if order.direction == Direction.BUY:

@@ -43,6 +43,11 @@ class Order_BD(Base):
     filled = Column(Integer, default=0)
     user = relationship("User_BD", back_populates="orders")
 
+    @property
+    def timestamp_aware(self) -> datetime:
+        ts = self.timestamp
+        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
 
 class Balance_BD(Base):
     __tablename__ = "balances"
