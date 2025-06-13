@@ -137,13 +137,15 @@ def update_balance(db: Session, user_id: str, ticker: str, amount: int) -> None:
     if balance:
         new_amount = balance.amount + amount
         if new_amount < 0:
-            raise HTTPException(status_code=400,
-                                detail=f"Insufficient {ticker} balance")
+            raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[
+                ValidationError(loc=["amount"], msg="Insufficient {ticker} balance",
+                                type="value_error")]).dict())
         balance.amount = new_amount
     else:
         if amount < 0:
-            raise HTTPException(status_code=400,
-                                detail=f"Insufficient {ticker} balance")
+            raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[
+                ValidationError(loc=["amount"], msg="Insufficient {ticker} balance",
+                                type="value_error")]).dict())
         balance = Balance_BD(user_id=user_id, ticker=ticker, amount=amount)
         db.add(balance)
 
@@ -259,9 +261,20 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
                 if need == 0:
                     break
             if need > 0:
-                raise HTTPException(status_code=400, detail="Not enough liquidity to execute market BUY")
+                raise HTTPException(detail=HTTPValidationError(detail=[ValidationError(loc=["ticker"], msg="Not enough liquidity to execute market BUY", type="value_error")]).dict())
             if user_balances.get("RUB", 0) < cost:
-                raise HTTPException(status_code=400, detail="Insufficient RUB balance for market BUY")
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "detail": [
+                            {
+                                "loc": ["body", "liquidity"],
+                                "msg": "Not enough liquidity to execute market SELL",
+                                "type": "value_error"
+                            }
+                        ]
+                    }
+                )
             update_balance(db, user_id, "RUB", -cost)
 
 
@@ -303,10 +316,8 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
                 if need == 0:
                     break
             if need > 0:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Not enough liquidity to execute market SELL"
-                )
+                raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[
+                        ValidationError(loc=["amount"], msg="Not enough liquidity to execute market SELL", type="value_error")]).dict())
         update_balance(db, user_id, order.ticker, -order.qty)
 
     db_order = Order_BD(
@@ -375,14 +386,18 @@ def cancel_order(db: Session, order_id: str):
     order = db.query(Order_BD).filter(Order_BD.id == order_id).first()
     if not order:
         logger.warning(f"Order {order_id} not found for cancellation")
+        raise HTTPException(status_code=400, detail=HTTPValidationError(
+            detail=[ValidationError(loc=["amount"], msg="Cannot cancel market order", type="value_error")]).dict())
         return False
     if order.price is None:
         logger.warning(f"Cannot cancel market order {order_id}")
-        raise HTTPException(status_code=400, detail="Cannot cancel market order")
+        raise HTTPException(status_code=400, detail=HTTPValidationError(
+            detail=[ValidationError(loc=["amount"], msg="Cannot cancel market order", type="value_error")]).dict())
     if order.status in (
         OrderStatus.EXECUTED, OrderStatus.PARTIALLY_EXECUTED, OrderStatus.CANCELLED) or order.filled > 0:
         logger.warning(f"Cannot cancel already executed or partially executed order {order_id}")
-        raise HTTPException(status_code=400, detail="Cannot cancel executed, partially executed or cancelled order")
+        raise HTTPException(status_code=400, detail=HTTPValidationError(
+            detail=[ValidationError(loc=["amount"], msg="annot cancel executed, partially executed or cancelled order", type="value_error")]).dict())
     remaining = order.qty - order.filled
     if order.status == OrderStatus.NEW and remaining > 0:
         if order.direction == Direction.BUY:
