@@ -459,7 +459,6 @@ def delete_instrument(db: Session, ticker: str):
         logger.info(f"Deleted {balances_count} user balances for instrument {ticker}")
         db.delete(instrument)
         logger.info(f"Successfully deleted instrument {ticker}")
-        db.delete(instrument)
         db.commit()
         return True
     logger.warning(f"Instrument {ticker} not found, nothing to delete")
