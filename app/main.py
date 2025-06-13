@@ -689,7 +689,7 @@ async def get_order_endpoint(
 ):
     order = get_order(db, order_id, str(current_user.id))
     logger.info(f"Get order endpoint called for order: {order} and {order_id}, user: {current_user.id} and {order.user_id}")
-    if not order:
+    if order is None:
         logger.warning(f"Order {order_id} not found or not owned by user {current_user.id}")
         raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc=["order_id"], msg="Order not found", type="value_error")]).dict())
     return order
