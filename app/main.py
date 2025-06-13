@@ -465,15 +465,6 @@ def add_instrument(db: Session, instrument: Instrument):
         return False
     db_instrument = Instrument_BD(name=instrument.name, ticker=instrument.ticker)
     db.add(db_instrument)
-    db.flush()
-    users = db.query(User_BD).all()
-    for user in users:
-        balance = Balance_BD(
-            user_id=str(user.id),
-            ticker=instrument.ticker,
-            amount=0
-        )
-        db.add(balance)
     logger.info(f"Successfully added instrument {instrument.ticker}")
     db.commit()
     return True
