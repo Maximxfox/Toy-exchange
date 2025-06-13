@@ -141,6 +141,7 @@ def _get_balances(db: Session, user_id: str):
 
 
 def update_balance(db: Session, user_id: str, ticker: str, amount: int) -> None:
+    logger.info(f"Updating balance for user {user_id}: {ticker} {amount:+}")
     balance = (
         db.query(Balance_BD)
         .with_for_update()
@@ -148,29 +149,33 @@ def update_balance(db: Session, user_id: str, ticker: str, amount: int) -> None:
                      Balance_BD.ticker == ticker))
         .one_or_none()
     )
-
     if balance:
         new_amount = balance.amount + amount
         if new_amount < 0:
+            logger.warning(f"Insufficient balance for user {user_id}: {ticker} balance would become {new_amount}")
             raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[
-                ValidationError(loc=["amount"], msg="Insufficient {ticker} balance",
+                ValidationError(loc=["amount"], msg=f"Insufficient {ticker} balance",
                                 type="value_error")]).dict())
         balance.amount = new_amount
     else:
         if amount < 0:
+            logger.warning(f"Attempt to create negative balance for user {user_id}: {ticker} {amount}")
             raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[
-                ValidationError(loc=["amount"], msg="Insufficient {ticker} balance",
+                ValidationError(loc=["amount"], msg=f"Insufficient {ticker} balance",
                                 type="value_error")]).dict())
         balance = Balance_BD(user_id=user_id, ticker=ticker, amount=amount)
         db.add(balance)
-
+        logger.info(f"Created new balance record for user {user_id}: {ticker} = {amount}")
     db.flush()
 
 
 def execute_order(db: Session, new_order: Order_BD):
-    logger.info(f"Executing order ID: {new_order.id}, ticker: {new_order.ticker}, direction: {new_order.direction}, qty: {new_order.qty}, price: {new_order.price}")
+    logger.info(
+        f"Executing order ID: {new_order.id}, ticker: {new_order.ticker}, direction: {new_order.direction}, qty: {new_order.qty}, price: {new_order.price}")
     if new_order.status == OrderStatus.CANCELLED or new_order.status == OrderStatus.EXECUTED:
-        raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[ValidationError(loc=["order"], msg="Instrument not found", type="value_error")]).dict())
+        logger.warning(f"Attempt to execute already completed order ID: {new_order.id} with status {new_order.status}")
+        raise HTTPException(status_code=400, detail=HTTPValidationError(
+            detail=[ValidationError(loc=["order"], msg="Instrument not found", type="value_error")]).dict())
     opposite_direction = Direction.SELL if new_order.direction == Direction.BUY else Direction.BUY
     if new_order.price is None:
         price_condition = True
@@ -179,26 +184,38 @@ def execute_order(db: Session, new_order: Order_BD):
             (Order_BD.price <= new_order.price) if new_order.direction == Direction.BUY
             else (Order_BD.price >= new_order.price)
         )
+
     order_by = Order_BD.price.asc() if new_order.direction == Direction.BUY else Order_BD.price.desc()
     matching_orders = (db.query(Order_BD).filter(and_(
-                Order_BD.ticker == new_order.ticker,
-                Order_BD.direction == opposite_direction,
-                Order_BD.status.in_([OrderStatus.NEW, OrderStatus.PARTIALLY_EXECUTED]),
-                price_condition)
+        Order_BD.ticker == new_order.ticker,
+        Order_BD.direction == opposite_direction,
+        Order_BD.status.in_([OrderStatus.NEW, OrderStatus.PARTIALLY_EXECUTED]),
+        price_condition)
     ).order_by(order_by).all())
+
+    logger.info(f"Found {len(matching_orders)} potential matching orders for order ID: {new_order.id}")
+
     remaining_qty = new_order.qty - new_order.filled
     for match_order in matching_orders:
         if remaining_qty <= 0:
+            logger.info(f"Order ID: {new_order.id} fully filled, stopping execution")
             break
+
         if new_order.price is None and match_order.price is None:
+            logger.warning("Both orders have None price, skipping")
             continue
+
         trade_price = match_order.price if match_order.price is not None else new_order.price
         if trade_price is None:
+            logger.warning("Could not determine trade price, skipping")
             continue
+
         logger.info(f"Matching with order ID: {match_order.id}, price: {trade_price}")
         match_available = match_order.qty - match_order.filled
         matched_qty = min(remaining_qty, match_available)
-        logger.info(f"Matched qty: {matched_qty}, new_order.filled: {new_order.filled}, match_order.filled: {match_order.filled}")
+        logger.info(
+            f"Matched qty: {matched_qty}, new_order.filled: {new_order.filled}, match_order.filled: {match_order.filled}")
+
         new_order.filled += matched_qty
         match_order.filled += matched_qty
         new_order.status = (
@@ -207,6 +224,7 @@ def execute_order(db: Session, new_order: Order_BD):
         match_order.status = (
             OrderStatus.EXECUTED if match_order.filled == match_order.qty else OrderStatus.PARTIALLY_EXECUTED
         )
+
         transaction = Transaction_BD(
             ticker=new_order.ticker,
             amount=matched_qty,
@@ -214,12 +232,15 @@ def execute_order(db: Session, new_order: Order_BD):
             timestamp=datetime.now(timezone.utc)
         )
         db.add(transaction)
+        logger.info(f"Created transaction for {matched_qty} {new_order.ticker} at {trade_price}")
+
         if new_order.direction == Direction.BUY and new_order.price is not None:
             update_balance(db, new_order.user_id, new_order.ticker, matched_qty)
 
             if new_order.price is not None:
                 refund = (new_order.price - trade_price) * matched_qty
                 if refund > 0:
+                    logger.info(f"Refunding {refund} RUB to buyer (order ID: {new_order.id})")
                     update_balance(db, new_order.user_id, "RUB", refund)
 
             update_balance(db, match_order.user_id, "RUB", matched_qty * trade_price)
@@ -231,27 +252,38 @@ def execute_order(db: Session, new_order: Order_BD):
             if match_order.price is not None:
                 refund = (match_order.price - trade_price) * matched_qty
                 if refund > 0:
+                    logger.info(f"Refunding {refund} RUB to seller (order ID: {match_order.id})")
                     update_balance(db, match_order.user_id, "RUB", refund)
+
         remaining_qty -= matched_qty
+        logger.info(f"Remaining qty to fill: {remaining_qty}")
 
 
 def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketOrderBody]):
+    logger.info(f"Creating new order for user {user_id}: {order}")
+
     if not db.query(Instrument_BD).filter(Instrument_BD.ticker == order.ticker).first():
+        logger.warning(f"Attempt to create order for unknown ticker: {order.ticker}")
         raise HTTPException(
             status_code=400,
-            detail=HTTPValidationError(detail=[ValidationError(loc=["ticker"], msg="Instrument not found", type="value_error")]).dict()
+            detail=HTTPValidationError(
+                detail=[ValidationError(loc=["ticker"], msg="Instrument not found", type="value_error")]).dict()
         )
+
     user_balances = _get_balances(db, user_id)
     if order.direction == Direction.BUY:
         if isinstance(order, LimitOrderBody):
             required_rub = order.qty * order.price
             if user_balances.get("RUB", 0) < required_rub:
+                logger.warning(
+                    f"Insufficient RUB balance for user {user_id}: has {user_balances.get('RUB', 0)}, needs {required_rub}")
                 raise HTTPException(
                     status_code=400,
                     detail=HTTPValidationError(detail=[
                         ValidationError(loc=["balance"], msg="Insufficient RUB balance", type="value_error")]).dict()
                 )
             update_balance(db, user_id, "RUB", -required_rub)
+            logger.info(f"Reserved {required_rub} RUB for limit buy order")
 
         else:  # MarketOrderBody
             asks = (
@@ -265,6 +297,8 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
                 .order_by(Order_BD.price.asc())
                 .all()
             )
+            logger.info(f"Found {len(asks)} asks for market buy order")
+
             cost, need = 0, order.qty
             for a in asks:
                 free = a.qty - a.filled
@@ -275,63 +309,20 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
                 need -= take
                 if need == 0:
                     break
+
             if need > 0:
-                raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[ValidationError(loc=["ticker"], msg="Not enough liquidity to execute market BUY", type="value_error")]).dict())
+                logger.warning(f"Not enough liquidity for market buy: missing {need} {order.ticker}")
+                raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[
+                    ValidationError(loc=["ticker"], msg="Not enough liquidity to execute market BUY",
+                                    type="value_error")]).dict())
             if user_balances.get("RUB", 0) < cost:
+                logger.warning(
+                    f"Insufficient RUB balance for market buy: has {user_balances.get('RUB', 0)}, needs {cost}")
                 raise HTTPException(
                     status_code=400,
-                    detail={
-                        "detail": [
-                            {
-                                "loc": ["body", "liquidity"],
-                                "msg": "Not enough liquidity to execute market SELL",
-                                "type": "value_error"
-                            }
-                        ]
-                    }
-                )
+                    detail={"detail": [{"loc": ["body", "liquidity"],"msg": "Not enough liquidity to execute market SELL","type": "value_error"}]})
             update_balance(db, user_id, "RUB", -cost)
-
-
-
-    else:  # SELL
-        available_balance = user_balances.get(order.ticker, 0)
-
-        if available_balance < order.qty:
-            raise HTTPException(
-                status_code=400,
-                detail=HTTPValidationError(
-                    detail=[ValidationError(
-                        loc=["balance"],
-                        msg=f"Insufficient {order.ticker} balance: available {available_balance}, requested {order.qty}",
-                        type="value_error")]
-                ).dict()
-            )
-
-        if isinstance(order, MarketOrderBody):
-            bids = (
-                db.query(Order_BD)
-                .filter(and_(
-                    Order_BD.ticker == order.ticker,
-                    Order_BD.direction == Direction.BUY,
-                    Order_BD.status.in_([OrderStatus.NEW, OrderStatus.PARTIALLY_EXECUTED]),
-                    Order_BD.qty > Order_BD.filled
-                ))
-                .order_by(Order_BD.price.desc())
-                .all()
-            )
-            need = order.qty
-            for b in bids:
-                free = b.qty - b.filled
-                take = min(free, need)
-                need -= take
-                if need == 0:
-                    break
-            if need > 0:
-                raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[
-                        ValidationError(loc=["amount"], msg="Not enough liquidity to execute market SELL", type="value_error")]).dict())
-        update_balance(db, user_id, order.ticker, -order.qty)
-
+            logger.info(f"Reserved {cost} RUB for market buy order")
     db_order = Order_BD(
         user_id=user_id,
         ticker=order.ticker,
@@ -341,7 +332,6 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
         status=OrderStatus.NEW,
         timestamp=datetime.now(timezone.utc)
     )
-
     db.add(db_order)
     db.flush()
     execute_order(db, db_order)
