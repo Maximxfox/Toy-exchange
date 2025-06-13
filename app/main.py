@@ -76,14 +76,6 @@ def create_user(db: Session, user: NewUser):
     db_user = User_BD(name=user.name, role=UserRole.USER, api_key=f"key-{uuid4()}")
     db.add(db_user)
     db.flush()
-    instruments = db.query(Instrument_BD).all()
-    for instrument in instruments:
-        balance = Balance_BD(
-            user_id=str(db_user.id),
-            ticker=instrument.ticker,
-            amount=0
-        )
-        db.add(balance)
     rub_balance = Balance_BD(
         user_id=str(db_user.id),
         ticker="RUB",
@@ -434,7 +426,7 @@ def cancel_order(db: Session, order_id: str):
         raise HTTPException(status_code=400, detail=HTTPValidationError(
             detail=[ValidationError(loc=["amount"], msg="Cannot cancel market order", type="value_error")]).dict())
     if order.status in (
-        OrderStatus.EXECUTED, OrderStatus.PARTIALLY_EXECUTED, OrderStatus.CANCELLED) or order.filled > 0:
+        OrderStatus.EXECUTED, OrderStatus.CANCELLED):
         logger.warning(f"Cannot cancel already executed or partially executed order {order_id}")
         raise HTTPException(status_code=400, detail=HTTPValidationError(
             detail=[ValidationError(loc=["amount"], msg="annot cancel executed, partially executed or cancelled order", type="value_error")]).dict())
