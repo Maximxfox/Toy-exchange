@@ -280,9 +280,6 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
 
 
     else:  # SELL
-
-        # ▸ 1. Проверяем баланс пользователя
-
         available_balance = user_balances.get(order.ticker, 0)
 
         if available_balance < order.qty:
@@ -375,10 +372,10 @@ def get_order(db: Session, order_id: str, user_id: str):
         return None
     if order.price is not None:
         body = LimitOrderBody(direction=order.direction, ticker=order.ticker, qty=order.qty, price=order.price)
-        return LimitOrder(id=order.id, status=order.status, user_id=order.user_id, timestamp=order.timestamp, body=body, filled=order.filled)
+        return LimitOrder(id=order.id, status=order.status, user_id=order.user_id, timestamp=order.timestamp_aware, body=body, filled=order.filled)
     else:
         body = MarketOrderBody(direction=order.direction, ticker=order.ticker, qty=order.qty)
-        return MarketOrder(id=order.id, status=order.status, user_id=order.user_id, timestamp=order.timestamp, body=body)
+        return MarketOrder(id=order.id, status=order.status, user_id=order.user_id, timestamp=order.timestamp_aware, body=body)
 
 
 def cancel_order(db: Session, order_id: str):
