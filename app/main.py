@@ -51,7 +51,7 @@ def initialize_test_user(db: Session):
 
 
 def create_user(db: Session, user: NewUser):
-    logger.info(f"Creating user with name: {user.name}")
+    logger.info(f"Creating user with name: ")
     db_user = User_BD(name=user.name, role=UserRole.USER, api_key=f"key-{uuid4()}")
     db.add(db_user)
     db.commit()
@@ -246,7 +246,7 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
         if available_balance < order.qty:
             logger.warning(f"Insufficient balance for sell order: available {available_balance}, requested {order.qty}")
             raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[ValidationError(loc=["balance"], msg=f"Insufficient {order.ticker} balance: available {available_balance}, requested {order.qty}",type="value_error")]).dict())
-    with db.begin():
+    with db.begin_nested():
         db_order = Order_BD(
             user_id=user_id,
             ticker=order.ticker,
@@ -389,7 +389,7 @@ def get_current_user(authorization: Optional[str] = Header(default=None), db: Se
         )
     api_key = authorization[6:]
     user = db.query(User_BD).filter(User_BD.api_key == api_key).first()
-    logger.info(f"Authenticated user: {user.name} (ID: {user.id})")
+    logger.info(f"Authenticated user: (ID: {user.id})")
     if not user:
         logger.warning(f"No user found for API key: {api_key}")
         raise HTTPException(
