@@ -160,7 +160,7 @@ def update_balance(db: Session, user_id: str, ticker: str, amount: int) -> None:
         if new_amount < 0:
             logger.warning(f"Insufficient balance for user {user_id}: {ticker} balance would become {new_amount}")
             raise HTTPException(
-                status_code=400,
+                status_code=426,
                 detail=HTTPValidationError(detail=[
                     ValidationError(loc=["amount"], msg=f"Insufficient {ticker} balance",
                                     type="value_error")
@@ -171,7 +171,7 @@ def update_balance(db: Session, user_id: str, ticker: str, amount: int) -> None:
         if amount < 0:
             logger.warning(f"Attempt to create negative balance for user {user_id}: {ticker} {amount}")
             raise HTTPException(
-                status_code=400,
+                status_code=425,
                 detail=HTTPValidationError(detail=[
                     ValidationError(loc=["amount"], msg=f"Insufficient {ticker} balance",
                                     type="value_error")
@@ -189,7 +189,7 @@ def execute_order(db: Session, new_order: Order_BD):
     if new_order.status in (OrderStatus.CANCELLED, OrderStatus.EXECUTED):
         logger.warning(f"Attempt to execute already completed order ID: {new_order.id} with status {new_order.status}")
         raise HTTPException(
-            status_code=400,
+            status_code=424,
             detail=HTTPValidationError(
                 detail=[ValidationError(loc=["order"], msg="Cannot execute completed order", type="value_error")]
             ).dict()
@@ -276,7 +276,7 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
     if not db.query(Instrument_BD).filter(Instrument_BD.ticker == order.ticker).first():
         logger.warning(f"Attempt to create order for unknown ticker: {order.ticker}")
         raise HTTPException(
-            status_code=400,
+            status_code=423,
             detail=HTTPValidationError(
                 detail=[ValidationError(loc=["ticker"], msg="Instrument not found", type="value_error")]
             ).dict()
@@ -291,7 +291,7 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
                 logger.warning(f"Insufficient RUB balance for user {user_id}: "
                                f"has {user_balances.get('RUB', 0)}, needs {required_rub}")
                 raise HTTPException(
-                    status_code=400,
+                    status_code=422,
                     detail=HTTPValidationError(detail=[
                         ValidationError(loc=["balance"], msg="Insufficient RUB balance", type="value_error")
                     ]).dict()
@@ -311,7 +311,7 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
             if not asks:
                 logger.warning(f"No available sell orders for market buy: {order.ticker}")
                 raise HTTPException(
-                    status_code=400,
+                    status_code=421,
                     detail=HTTPValidationError(detail=[
                         ValidationError(loc=["ticker"], msg="Not enough liquidity to execute market BUY",
                                         type="value_error")
@@ -330,7 +330,7 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
             if need > 0:
                 logger.warning(f"Not enough liquidity for market buy: missing {need} {order.ticker}")
                 raise HTTPException(
-                    status_code=400,
+                    status_code=420,
                     detail=HTTPValidationError(detail=[
                         ValidationError(loc=["ticker"], msg="Not enough liquidity to execute market BUY",
                                         type="value_error")
@@ -340,7 +340,7 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
                 logger.warning(
                     f"Insufficient RUB balance for market buy: has {user_balances.get('RUB', 0)}, needs {cost}")
                 raise HTTPException(
-                    status_code=400,
+                    status_code=419,
                     detail=HTTPValidationError(detail=[
                         ValidationError(loc=["balance"], msg="Insufficient RUB balance", type="value_error")
                     ]).dict())
@@ -350,7 +350,7 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
                     logger.warning(
                         f"Insufficient balance for sell order: available {available_balance}, requested {order.qty}")
                 raise HTTPException(
-                status_code=400,
+                status_code=418,
                 detail=HTTPValidationError(detail=[
                     ValidationError(loc=["balance"],
                                     msg=f"Insufficient {order.ticker} balance: available {available_balance}, requested {order.qty}",
@@ -419,16 +419,16 @@ def cancel_order(db: Session, order_id: str):
     order = db.query(Order_BD).filter(Order_BD.id == order_id).first()
     if not order:
         logger.warning(f"Order {order_id} not found for cancellation")
-        raise HTTPException(status_code=400, detail=HTTPValidationError(
+        raise HTTPException(status_code=417, detail=HTTPValidationError(
             detail=[ValidationError(loc=["amount"], msg="Cannot cancel market order", type="value_error")]).dict())
     if order.price is None:
         logger.warning(f"Cannot cancel market order {order_id}")
-        raise HTTPException(status_code=400, detail=HTTPValidationError(
+        raise HTTPException(status_code=416, detail=HTTPValidationError(
             detail=[ValidationError(loc=["amount"], msg="Cannot cancel market order", type="value_error")]).dict())
     if order.status in (
         OrderStatus.EXECUTED, OrderStatus.CANCELLED):
         logger.warning(f"Cannot cancel already executed or partially executed order {order_id}")
-        raise HTTPException(status_code=400, detail=HTTPValidationError(
+        raise HTTPException(status_code=415, detail=HTTPValidationError(
             detail=[ValidationError(loc=["amount"], msg="annot cancel executed, partially executed or cancelled order", type="value_error")]).dict())
     remaining = order.qty - order.filled
     if order.status == OrderStatus.NEW and remaining > 0:
@@ -683,7 +683,7 @@ async def get_order_endpoint(
     logger.info(f"Get order endpoint called for order: {order} and {order_id}, user: {current_user.id} and {order.user_id}")
     if order is None:
         logger.warning(f"Order {order_id} not found or not owned by user {current_user.id}")
-        raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc=["order_id"], msg="Order not found", type="value_error")]).dict())
+        raise HTTPException(status_code=415, detail=HTTPValidationError(detail=[ValidationError(loc=["order_id"], msg="Order not found", type="value_error")]).dict())
     return order
 
 @app.delete(
@@ -701,7 +701,7 @@ async def cancel_order_endpoint(order_id: str = Path(..., format="uuid4"), curre
     logger.info(f"Cancel order endpoint called for order: {order_id}, user: {current_user.id}")
     if not cancel_order(db, order_id):
         logger.warning(f"Order {order_id} not found for cancellation")
-        raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc=["order_id"], msg="Order not found", type="value_error")]).dict())
+        raise HTTPException(status_code=414, detail=HTTPValidationError(detail=[ValidationError(loc=["order_id"], msg="Order not found", type="value_error")]).dict())
     return Ok
 
 @app.delete(
@@ -719,11 +719,11 @@ async def delete_user_endpoint(user_id: str = Path(..., format="uuid4"), current
     logger.info(f"Delete user endpoint called for user: {user_id}, by admin: {current_user.id}")
     if current_user.role != UserRole.ADMIN:
         logger.warning(f"Non-admin user {current_user.id} attempted to delete user {user_id}")
-        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc=["authorization"], msg="Admin access required", type="permission_error")]).dict())
+        raise HTTPException(status_code=413, detail=HTTPValidationError(detail=[ValidationError(loc=["authorization"], msg="Admin access required", type="permission_error")]).dict())
     user = delete_user(db, user_id)
     if not user:
         logger.warning(f"User {user_id} not found for deletion")
-        raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc=["user_id"], msg="User not found", type="value_error")]).dict())
+        raise HTTPException(status_code=412, detail=HTTPValidationError(detail=[ValidationError(loc=["user_id"], msg="User not found", type="value_error")]).dict())
     return user
 
 @app.post(
@@ -745,9 +745,9 @@ async def add_instrument_endpoint(
     logger.info(f"Add instrument endpoint called for ticker: {instrument.ticker}, by user: {current_user.id}")
     if current_user.role != UserRole.ADMIN:
         logger.warning(f"Non-admin user {current_user.id} attempted to add instrument {instrument.ticker}")
-        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc=["authorization"], msg="Admin access required", type="permission_error")]).dict())
+        raise HTTPException(status_code=411, detail=HTTPValidationError(detail=[ValidationError(loc=["authorization"], msg="Admin access required", type="permission_error")]).dict())
     if not add_instrument(db, instrument):
-        raise HTTPException(status_code=403,detail=HTTPValidationError( detail=[ValidationError(loc=["ticker"], msg="Instrument with this ticker already exists",type="value_error")]).dict())
+        raise HTTPException(status_code=410,detail=HTTPValidationError( detail=[ValidationError(loc=["ticker"], msg="Instrument with this ticker already exists",type="value_error")]).dict())
     return Ok
 
 @app.delete(
@@ -770,10 +770,10 @@ async def delete_instrument_endpoint(
     logger.info(f"Delete instrument endpoint called for ticker: {ticker}, by user: {current_user.id}")
     if current_user.role != UserRole.ADMIN:
         logger.warning(f"Non-admin user {current_user.id} attempted to delete instrument {ticker}")
-        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc=["authorization"], msg="Admin access required", type="permission_error")]).dict())
+        raise HTTPException(status_code=409, detail=HTTPValidationError(detail=[ValidationError(loc=["authorization"], msg="Admin access required", type="permission_error")]).dict())
     if not delete_instrument(db, ticker):
         logger.warning(f"Instrument {ticker} not found for deletion")
-        raise HTTPException(status_code=404, detail=HTTPValidationError(detail=[ValidationError(loc=["ticker"], msg="Instrument not found", type="value_error")]).dict())
+        raise HTTPException(status_code=408, detail=HTTPValidationError(detail=[ValidationError(loc=["ticker"], msg="Instrument not found", type="value_error")]).dict())
     return Ok
 
 @app.post(
@@ -796,7 +796,7 @@ async def deposit_balance(
     logger.info(f"Deposit endpoint called for user: {body.user_id}, ticker: {body.ticker}, amount: {body.amount}, by admin: {current_user.id}")
     if current_user.role != UserRole.ADMIN:
         logger.warning(f"Non-admin user {current_user.id} attempted to deposit for user {body.user_id}")
-        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc=["authorization"], msg="Admin access required", type="permission_error")]).dict())
+        raise HTTPException(status_code=407, detail=HTTPValidationError(detail=[ValidationError(loc=["authorization"], msg="Admin access required", type="permission_error")]).dict())
     deposit(db, body)
     return Ok
 
@@ -820,8 +820,8 @@ async def withdraw_balance(
     logger.info(f"Withdraw endpoint called for user: {body.user_id}, ticker: {body.ticker}, amount: {body.amount}, by admin: {current_user.id}")
     if current_user.role != UserRole.ADMIN:
         logger.warning(f"Non-admin user {current_user.id} attempted to withdraw for user {body.user_id}")
-        raise HTTPException(status_code=403, detail=HTTPValidationError(detail=[ValidationError(loc=["authorization"], msg="Admin access required", type="permission_error")]).dict())
+        raise HTTPException(status_code=406, detail=HTTPValidationError(detail=[ValidationError(loc=["authorization"], msg="Admin access required", type="permission_error")]).dict())
     if not withdraw(db, body):
         logger.warning(f"Insufficient balance for withdrawal: user {body.user_id}, ticker {body.ticker}, amount {body.amount}")
-        raise HTTPException(status_code=400, detail=HTTPValidationError(detail=[ValidationError(loc=["amount"], msg="Insufficient balance", type="value_error")]).dict())
+        raise HTTPException(status_code=405, detail=HTTPValidationError(detail=[ValidationError(loc=["amount"], msg="Insufficient balance", type="value_error")]).dict())
     return Ok
