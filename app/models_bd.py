@@ -65,3 +65,8 @@ class Transaction_BD(Base):
         server_default=func.now(),
         nullable=False,
     )
+
+    @property
+    def timestamp_aware(self):
+        ts = self.timestamp
+        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
