@@ -283,7 +283,6 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
         )
 
     user_balances = _get_balances(db, user_id)
-
     if order.direction == Direction.BUY:
         if isinstance(order, LimitOrderBody):
             required_rub = order.qty * order.price
