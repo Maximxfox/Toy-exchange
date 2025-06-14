@@ -344,7 +344,6 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
                 status_code=409,
                 detail=f"Insufficient {order.ticker} balance"
             )
-
     db_order = Order_BD(
         user_id=user_id,
         ticker=order.ticker,
@@ -421,7 +420,7 @@ def cancel_order(db: Session, order_id: str):
         raise HTTPException(status_code=415, detail=HTTPValidationError(
             detail=[ValidationError(loc=["amount"], msg="annot cancel executed, partially executed or cancelled order", type="value_error")]).dict())
     remaining = order.qty - order.filled
-    if order.status == OrderStatus.NEW and remaining > 0:
+    if remaining > 0:
         order.status = OrderStatus.CANCELLED
         db.commit()
         return True
