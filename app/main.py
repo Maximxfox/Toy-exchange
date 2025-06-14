@@ -321,12 +321,6 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
                 need -= take
                 if need == 0:
                     break
-            if need > 0:
-                logger.warning(f"Not enough liquidity for market buy: missing {need} {order.ticker}")
-                raise HTTPException(
-                    status_code=400,
-                    detail="Not enough liquidity to execute market BUY"
-                )
             if user_balances.get("RUB", 0) < cost:
                 logger.warning(
                     f"Insufficient RUB balance for market buy: has {user_balances.get('RUB', 0)}, needs {cost}")
