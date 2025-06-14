@@ -727,7 +727,7 @@ async def add_instrument_endpoint(
     logger.info(f"Add instrument endpoint called for ticker: {instrument.ticker}, by user: {current_user.id}")
     if current_user.role != UserRole.ADMIN:
         logger.warning(f"Non-admin user {current_user.id} attempted to add instrument {instrument.ticker}")
-        raise HTTPException(status_code=411, detail=HTTPValidationError(detail=[ValidationError(loc=["authorization"], msg="Admin access required", type="permission_error")]).dict())
+        raise HTTPException(status_code=401, detail=HTTPValidationError(detail=[ValidationError(loc=["authorization"], msg="Admin access required", type="permission_error")]).dict())
     if not add_instrument(db, instrument):
         raise HTTPException(status_code=410,detail=HTTPValidationError( detail=[ValidationError(loc=["ticker"], msg="Instrument with this ticker already exists",type="value_error")]).dict())
     return Ok
