@@ -288,13 +288,11 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
         if isinstance(order, LimitOrderBody):
             required_rub = order.qty * order.price
             if user_balances.get("RUB", 0) < required_rub:
-                logger.warning(f"Insufficient RUB balance for user {user_id}: "
-                               f"has {user_balances.get('RUB', 0)}, needs {required_rub}")
+                logger.warning(
+                    f"Insufficient RUB balance for user {user_id}: has {user_balances.get('RUB', 0)}, needs {required_rub}")
                 raise HTTPException(
-                    status_code=422,
-                    detail=HTTPValidationError(detail=[
-                        ValidationError(loc=["balance"], msg="Insufficient RUB balance", type="value_error")
-                    ]).dict()
+                    status_code=409,
+                    detail="Insufficient RUB balance"
                 )
         else:
             asks = (
@@ -311,11 +309,8 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
             if not asks:
                 logger.warning(f"No available sell orders for market buy: {order.ticker}")
                 raise HTTPException(
-                    status_code=421,
-                    detail=HTTPValidationError(detail=[
-                        ValidationError(loc=["ticker"], msg="Not enough liquidity to execute market BUY",
-                                        type="value_error")
-                    ]).dict()
+                    status_code=400,
+                    detail="Not enough liquidity to execute market BUY"
                 )
             cost, need = 0, order.qty
             for a in asks:
@@ -330,32 +325,25 @@ def create_order(db: Session, user_id: str, order: Union[LimitOrderBody, MarketO
             if need > 0:
                 logger.warning(f"Not enough liquidity for market buy: missing {need} {order.ticker}")
                 raise HTTPException(
-                    status_code=420,
-                    detail=HTTPValidationError(detail=[
-                        ValidationError(loc=["ticker"], msg="Not enough liquidity to execute market BUY",
-                                        type="value_error")
-                    ]).dict()
+                    status_code=400,
+                    detail="Not enough liquidity to execute market BUY"
                 )
             if user_balances.get("RUB", 0) < cost:
                 logger.warning(
                     f"Insufficient RUB balance for market buy: has {user_balances.get('RUB', 0)}, needs {cost}")
                 raise HTTPException(
-                    status_code=419,
-                    detail=HTTPValidationError(detail=[
-                        ValidationError(loc=["balance"], msg="Insufficient RUB balance", type="value_error")
-                    ]).dict())
+                    status_code=409,
+                    detail="Insufficient RUB balance"
+                )
     elif order.direction == Direction.SELL:
         available_balance = user_balances.get(order.ticker, 0)
         if available_balance < order.qty:
             logger.warning(
-                f"Insufficient balance for sell order: available {available_balance}, requested {order.qty}")
+                f"Insufficient {order.ticker} balance for sell: available {available_balance}, requested {order.qty}")
             raise HTTPException(
-                status_code=418,
-                detail=HTTPValidationError(detail=[
-                    ValidationError(loc=["balance"],
-                                    msg=f"Insufficient {order.ticker} balance: available {available_balance}, requested {order.qty}",
-                                    type="value_error")
-                ]).dict())
+                status_code=409,
+                detail=f"Insufficient {order.ticker} balance"
+            )
 
     db_order = Order_BD(
         user_id=user_id,
